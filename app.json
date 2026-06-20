@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "패밀리톡",
+    "slug": "familytalk-app",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "resizeMode": "contain",
+      "backgroundColor": "#fff8ed"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#fff8ed"
+      }
+    },
+    "web": {
+      "bundler": "metro"
+    }
+  }
+}

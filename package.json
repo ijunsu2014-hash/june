@@ -1,0 +1,30 @@
+{
+  "name": "familytalk-app",
+  "version": "0.1.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~5.0.5",
+    "@react-native-async-storage/async-storage": "^1.24.0",
+    "expo": "~53.0.12",
+    "expo-status-bar": "~2.2.3",
+    "firebase": "^11.10.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "react-native": "0.79.4",
+    "react-native-web": "^0.20.0"
+  },
+  "devDependencies": {
+    "@azure/static-web-apps-cli": "^2.0.9",
+    "@types/node": "^25.9.3",
+    "@types/react": "~19.0.10",
+    "typescript": "~5.8.3"
+  }
+}

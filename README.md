@@ -174,3 +174,50 @@ flowchart LR
 
 본 문서는 패밀리톡 MVP 개발을 위한 1차 기획서이며, 추후 사용자 인터뷰 및 테스트 결과를 반영해 업데이트한다.
 ![패밀리톡](image/패밀리톡.png)
+
+## 17. 개발 시작 상태 (2026-06-13)
+
+기획서를 기준으로 MVP 1차 개발을 시작했으며, 현재 다음 항목이 구현되어 있습니다.
+
+- Expo + React Native + TypeScript 프로젝트 초기화
+- 핵심 4개 화면 구성: 홈 / 일정 / 투표 / 가족
+- MVP 핵심 기능(목데이터 기반)
+	- 오늘 일정 확인 및 일정 추가
+	- 오늘의 식단 상태 변경
+	- 가족 감정/컨디션 상태 변경
+	- 가족 투표 참여 및 결과 반영
+- Firebase 연동 준비 코드 추가(`Authentication`, `Firestore`)
+	- 환경변수 미설정 시 목데이터 모드로 동작
+
+## 18. 로컬 실행 방법
+
+1. 의존성 설치
+
+```bash
+npm install
+```
+
+2. 개발 서버 실행
+
+```bash
+npm run start
+```
+
+3. 타입 체크
+
+```bash
+npm run typecheck
+```
+
+## 19. Firebase 환경변수 (선택)
+
+실서비스 연동을 시작하려면 아래 환경변수를 설정합니다.
+
+- `EXPO_PUBLIC_FIREBASE_API_KEY`
+- `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN`
+- `EXPO_PUBLIC_FIREBASE_PROJECT_ID`
+- `EXPO_PUBLIC_FIREBASE_STORAGE_BUCKET`
+- `EXPO_PUBLIC_FIREBASE_MESSAGING_SENDER_ID`
+- `EXPO_PUBLIC_FIREBASE_APP_ID`
+
+환경변수를 설정하지 않아도 앱은 목데이터 모드로 실행됩니다.
