@@ -1,5 +1,6 @@
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useMemo, useState } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Animated,
   Easing,
@@ -21,7 +22,7 @@ import {
 } from "firebase/auth";
 import { useFamilyTalkStore } from "./src/hooks/useFamilyTalkStore";
 import { auth, isFirebaseConfigured } from "./src/services/firebase";
-import { colors, mealMeta, moodMeta } from "./src/theme";
+import { colors, darkColors, mealMeta, moodMeta } from "./src/theme";
 import { DailyMeal, FamilyMember, ScheduleItem, Vote } from "./src/types";
 
 type TabKey = "home" | "schedule" | "vote" | "family";
@@ -33,16 +34,73 @@ const tabs: { key: TabKey; label: string }[] = [
   { key: "family", label: "가족" }
 ];
 
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+type ThemeColors = typeof colors;
+type DeleteTargetType = "schedule" | "member" | "vote";
+const THEME_STORAGE_KEY = "familytalk-theme-v1";
+
+const WEEKDAY_SHORT_KR = ["월", "화", "수", "목", "금", "토", "일"];
+const SOLAR_HOLIDAY_NAME_MAP: Record<string, string> = {
+  "01-01": "신정",
+  "03-01": "삼일절",
+  "05-05": "어린이날",
+  "06-06": "현충일",
+  "08-15": "광복절",
+  "10-03": "개천절",
+  "10-09": "한글날",
+  "12-25": "성탄절"
+};
+
+const toMondayIndex = (day: number) => (day === 0 ? 6 : day - 1);
+
+const toDateKey = (date: Date) => {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+};
+
+const isHoliday = (date: Date) => {
+  const md = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return Boolean(SOLAR_HOLIDAY_NAME_MAP[md]);
+};
+
+const getHolidayName = (date: Date) => {
+  const md = `${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return SOLAR_HOLIDAY_NAME_MAP[md];
+};
+
+const formatTodayText = (date: Date) => {
+  const weekLabel = ["일", "월", "화", "수", "목", "금", "토"][date.getDay()];
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} (${weekLabel})`;
+};
+
+function SectionCard({
+  title,
+  children,
+  headerRight,
+  themeColors
+}: {
+  title: string;
+  children: React.ReactNode;
+  headerRight?: React.ReactNode;
+  themeColors: ThemeColors;
+}) {
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>{title}</Text>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>{title}</Text>
+        {headerRight}
+      </View>
       {children}
     </View>
   );
 }
 
-function AuthBrand() {
+function AuthBrand({ themeColors }: { themeColors: ThemeColors }) {
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
   return (
     <View style={styles.brandWrap}>
       <View style={styles.brandLogoBox}>
@@ -58,24 +116,96 @@ function AuthBrand() {
 
 function HomeScreen({
   todaySchedules,
+  schedules,
   meal,
   members,
   onMealStatus,
   onMealUpdate,
-  onRequestDeleteSchedule
+  onRequestDeleteSchedule,
+  themeColors
 }: {
-  todaySchedules: { id: string; title: string; dateTime: string; isFamilyEvent: boolean }[];
+  todaySchedules: ScheduleItem[];
+  schedules: ScheduleItem[];
   meal: DailyMeal;
   members: FamilyMember[];
   onMealStatus: (status: DailyMeal["status"]) => void;
   onMealUpdate: (title: string, shoppingMemo?: string) => void;
   onRequestDeleteSchedule: (scheduleId: string) => void;
+  themeColors: ThemeColors;
 }) {
   const [mealTitle, setMealTitle] = useState(meal.title);
+  const [isCalendarVisible, setIsCalendarVisible] = useState(false);
+  const [calendarMonth, setCalendarMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
+  const monthlyCalendar = useMemo(() => {
+    const year = calendarMonth.getFullYear();
+    const month = calendarMonth.getMonth();
+    const first = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const offset = toMondayIndex(first.getDay());
+    const totalCells = Math.ceil((offset + daysInMonth) / 7) * 7;
+
+    const scheduleByDate = new Map<string, ScheduleItem[]>();
+    schedules.forEach((item) => {
+      const key = toDateKey(new Date(item.dateTime));
+      const existing = scheduleByDate.get(key) ?? [];
+      existing.push(item);
+      scheduleByDate.set(key, existing);
+    });
+
+    const cells = Array.from({ length: totalCells }, (_, index) => {
+      const day = index - offset + 1;
+      if (day < 1 || day > daysInMonth) {
+        return null;
+      }
+
+      const date = new Date(year, month, day);
+      const key = toDateKey(date);
+      const items = (scheduleByDate.get(key) ?? []).sort(
+        (a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime()
+      );
+
+      return {
+        key,
+        date,
+        day,
+        isSaturday: date.getDay() === 6,
+        isSunday: date.getDay() === 0,
+        isHoliday: isHoliday(date),
+        holidayName: getHolidayName(date),
+        items
+      };
+    });
+
+    return {
+      title: `${year}년 ${month + 1}월`,
+      cells
+    };
+  }, [calendarMonth, schedules]);
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
-      <SectionCard title="오늘 일정">
+    <>
+      <ScrollView contentContainerStyle={styles.content}>
+        <SectionCard
+          title="오늘 일정"
+          headerRight={
+            <Pressable
+              style={styles.calendarOpenButton}
+              onPress={() => {
+                const now = new Date();
+                setCalendarMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+                setIsCalendarVisible(true);
+              }}
+            >
+              <Text style={styles.calendarOpenButtonText}>달력</Text>
+            </Pressable>
+          }
+          themeColors={themeColors}
+        >
         {todaySchedules.length === 0 ? (
           <Text style={styles.muted}>오늘 등록된 일정이 없습니다.</Text>
         ) : (
@@ -91,15 +221,15 @@ function HomeScreen({
             </View>
           ))
         )}
-      </SectionCard>
+        </SectionCard>
 
-      <SectionCard title="오늘의 식단">
+        <SectionCard title="오늘의 식단" themeColors={themeColors}>
         <Text style={styles.mainText}>{meal.title}</Text>
         <TextInput
           value={mealTitle}
           onChangeText={setMealTitle}
           placeholder="식단 제목 입력"
-          placeholderTextColor={colors.textSecondary}
+          placeholderTextColor={themeColors.textSecondary}
           style={styles.input}
         />
         <Pressable
@@ -124,9 +254,9 @@ function HomeScreen({
             </Pressable>
           ))}
         </View>
-      </SectionCard>
+        </SectionCard>
 
-      <SectionCard title="가족 컨디션">
+        <SectionCard title="가족 컨디션" themeColors={themeColors}>
         {members.length === 0 ? (
           <Text style={styles.muted}>아직 등록된 가족 구성원이 없습니다.</Text>
         ) : (
@@ -139,8 +269,79 @@ function HomeScreen({
             </View>
           ))
         )}
-      </SectionCard>
-    </ScrollView>
+        </SectionCard>
+      </ScrollView>
+
+      <Modal visible={isCalendarVisible} transparent animationType="fade" onRequestClose={() => setIsCalendarVisible(false)}>
+        <View style={styles.calendarModalRoot}>
+          <Pressable style={styles.calendarBackdrop} onPress={() => setIsCalendarVisible(false)} />
+          <View style={styles.calendarPanel}>
+            <View style={styles.rowBetween}>
+              <Pressable
+                style={styles.calendarMonthMoveButton}
+                onPress={() => setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() - 1, 1))}
+              >
+                <Text style={styles.calendarCloseButtonText}>이전</Text>
+              </Pressable>
+              <Text style={styles.calendarMonthTitle}>{monthlyCalendar.title}</Text>
+              <Pressable
+                style={styles.calendarMonthMoveButton}
+                onPress={() => setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + 1, 1))}
+              >
+                <Text style={styles.calendarCloseButtonText}>다음</Text>
+              </Pressable>
+            </View>
+            <View style={styles.calendarWeekHeaderRow}>
+              {WEEKDAY_SHORT_KR.map((label, idx) => (
+                <Text
+                  key={label}
+                  style={[
+                    styles.calendarWeekHeaderText,
+                    idx === 5 && styles.calendarSaturdayText,
+                    idx === 6 && styles.calendarSundayHolidayText
+                  ]}
+                >
+                  {label}
+                </Text>
+              ))}
+            </View>
+            <ScrollView>
+              <View style={styles.calendarGrid}>
+                {monthlyCalendar.cells.map((cell, idx) => {
+                  if (!cell) {
+                    return <View key={`empty-${idx}`} style={styles.calendarCell} />;
+                  }
+
+                  const dayTextStyle = [
+                    styles.calendarDayNumber,
+                    cell.isSaturday && styles.calendarSaturdayText,
+                    (cell.isSunday || cell.isHoliday) && styles.calendarSundayHolidayText
+                  ];
+
+                  return (
+                    <View key={cell.key} style={styles.calendarCell}>
+                      <Text style={dayTextStyle}>{cell.day}</Text>
+                      {cell.holidayName ? <Text style={styles.calendarHolidayName}>{cell.holidayName}</Text> : null}
+                      {cell.items.slice(0, 2).map((item) => (
+                        <Text key={item.id} style={styles.calendarEventText} numberOfLines={1}>
+                          {item.title}
+                        </Text>
+                      ))}
+                      {cell.items.length > 2 ? <Text style={styles.calendarEventMore}>+{cell.items.length - 2}</Text> : null}
+                    </View>
+                  );
+                })}
+                </View>
+            </ScrollView>
+            <View style={styles.calendarFooter}>
+              <Pressable style={styles.calendarCloseButton} onPress={() => setIsCalendarVisible(false)}>
+                <Text style={styles.calendarCloseButtonText}>닫기</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </>
   );
 }
 
@@ -148,24 +349,27 @@ function ScheduleScreen({
   schedules,
   scheduleCount,
   onAdd,
-  onRequestDelete
+  onRequestDelete,
+  themeColors
 }: {
   schedules: ScheduleItem[];
   scheduleCount: number;
   onAdd: (title: string, isFamily: boolean) => void;
   onRequestDelete: (scheduleId: string) => void;
+  themeColors: ThemeColors;
 }) {
   const [title, setTitle] = useState("");
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <SectionCard title="일정 추가">
+      <SectionCard title="일정 추가" themeColors={themeColors}>
         <Text style={styles.subtleCount}>현재 일정 수 : {scheduleCount}개</Text>
         <TextInput
           value={title}
           onChangeText={setTitle}
           placeholder="일정 입력"
-          placeholderTextColor={colors.textSecondary}
+          placeholderTextColor={themeColors.textSecondary}
           style={styles.input}
         />
         <View style={styles.rowGap}>
@@ -184,7 +388,7 @@ function ScheduleScreen({
         </View>
       </SectionCard>
 
-      <SectionCard title="등록된 일정">
+      <SectionCard title="등록된 일정" themeColors={themeColors}>
         {schedules.length === 0 ? (
           <Text style={styles.muted}>아직 등록된 일정이 없습니다.</Text>
         ) : (
@@ -208,30 +412,35 @@ function ScheduleScreen({
 function VoteScreen({
   votes,
   onVote,
-  onCreateVote
+  onCreateVote,
+  onRequestDeleteVote,
+  themeColors
 }: {
   votes: Vote[];
   onVote: (voteId: string, optionId: string) => void;
   onCreateVote: (topic: string, options: string[]) => void;
+  onRequestDeleteVote: (voteId: string) => void;
+  themeColors: ThemeColors;
 }) {
   const [topic, setTopic] = useState("");
   const [optionsText, setOptionsText] = useState("");
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <SectionCard title="투표 만들기">
+      <SectionCard title="투표 만들기" themeColors={themeColors}>
         <TextInput
           value={topic}
           onChangeText={setTopic}
           placeholder="투표 주제 입력"
-          placeholderTextColor={colors.textSecondary}
+          placeholderTextColor={themeColors.textSecondary}
           style={styles.input}
         />
         <TextInput
           value={optionsText}
           onChangeText={setOptionsText}
-          placeholder="선택지 쉼표로 구분 (예: 한식, 피자, 중식)"
-          placeholderTextColor={colors.textSecondary}
+          placeholder="선택지 쉼표로 구분 (예: 가, 나, 다)"
+          placeholderTextColor={themeColors.textSecondary}
           style={styles.input}
         />
         <Pressable
@@ -256,7 +465,7 @@ function VoteScreen({
       {votes.map((vote) => {
         const total = vote.options.reduce((sum, option) => sum + option.count, 0);
         return (
-          <SectionCard key={vote.id} title={vote.topic}>
+          <SectionCard key={vote.id} title={vote.topic} themeColors={themeColors}>
             {vote.options.map((option) => {
               const ratio = total === 0 ? 0 : Math.round((option.count / total) * 100);
               const selected = vote.userVotedOptionId === option.id;
@@ -271,6 +480,12 @@ function VoteScreen({
                 </Pressable>
               );
             })}
+            <View style={styles.rowBetween}>
+              <View />
+              <Pressable style={styles.deleteButton} onPress={() => onRequestDeleteVote(vote.id)}>
+                <Text style={styles.deleteButtonText}>삭제</Text>
+              </Pressable>
+            </View>
           </SectionCard>
         );
       })}
@@ -281,42 +496,38 @@ function VoteScreen({
 function FamilyScreen({
   members,
   onMood,
-  onAddMember
+  onAddMember,
+  onRequestDeleteMember,
+  themeColors
 }: {
   members: FamilyMember[];
   onMood: (memberId: string, mood: FamilyMember["mood"]) => void;
   onAddMember: (name: string, role: string) => void;
+  onRequestDeleteMember: (memberId: string) => void;
+  themeColors: ThemeColors;
 }) {
   const moods = useMemo(() => Object.keys(moodMeta) as FamilyMember["mood"][], []);
   const [name, setName] = useState("");
-  const [role, setRole] = useState("");
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <SectionCard title="가족 구성원 추가">
+      <SectionCard title="가족 구성원 추가" themeColors={themeColors}>
         <TextInput
           value={name}
           onChangeText={setName}
           placeholder="이름 입력"
-          placeholderTextColor={colors.textSecondary}
-          style={styles.input}
-        />
-        <TextInput
-          value={role}
-          onChangeText={setRole}
-          placeholder="역할 입력 (예: 고등학생, 직장인)"
-          placeholderTextColor={colors.textSecondary}
+          placeholderTextColor={themeColors.textSecondary}
           style={styles.input}
         />
         <Pressable
           style={styles.buttonPrimary}
           onPress={() => {
-            if (!name.trim() || !role.trim()) {
+            if (!name.trim()) {
               return;
             }
-            onAddMember(name.trim(), role.trim());
+            onAddMember(name.trim(), "가족");
             setName("");
-            setRole("");
           }}
         >
           <Text style={styles.buttonPrimaryText}>직접 가족 추가</Text>
@@ -324,13 +535,18 @@ function FamilyScreen({
       </SectionCard>
 
       {members.length === 0 ? (
-        <SectionCard title="가족 구성원">
+        <SectionCard title="가족 구성원" themeColors={themeColors}>
           <Text style={styles.muted}>아직 등록된 가족 구성원이 없습니다.</Text>
         </SectionCard>
       ) : (
         members.map((member) => (
-          <SectionCard key={member.id} title={`${member.name} (${member.role})`}>
-            <Text style={styles.muted}>온라인: {member.isOnline ? "접속 중" : "오프라인"}</Text>
+          <SectionCard key={member.id} title={member.name} themeColors={themeColors}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.muted}>온라인: {member.isOnline ? "접속 중" : "오프라인"}</Text>
+              <Pressable style={styles.deleteButton} onPress={() => onRequestDeleteMember(member.id)}>
+                <Text style={styles.deleteButtonText}>삭제</Text>
+              </Pressable>
+            </View>
             <View style={styles.chipRow}>
               {moods.map((mood) => (
                 <Pressable
@@ -353,6 +569,7 @@ function FamilyScreen({
 
 export default function App() {
   const [tab, setTab] = useState<TabKey>("home");
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [allowLocalMode, setAllowLocalMode] = useState(false);
   const [authReady, setAuthReady] = useState(!isFirebaseConfigured);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -362,8 +579,15 @@ export default function App() {
   const [authPending, setAuthPending] = useState(false);
 
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
+  const [deleteTargetType, setDeleteTargetType] = useState<DeleteTargetType>("schedule");
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
   const [sheetAnim] = useState(() => new Animated.Value(0));
+  const [themeFadeAnim] = useState(() => new Animated.Value(1));
+  const [isThemeAnimating, setIsThemeAnimating] = useState(false);
+  const [isThemeHydrated, setIsThemeHydrated] = useState(false);
+  const themeColors = isDarkMode ? darkColors : colors;
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+  const todayHeaderText = useMemo(() => formatTodayText(new Date()), []);
   const {
     members,
     schedules,
@@ -377,8 +601,45 @@ export default function App() {
     addSchedule,
     deleteSchedule,
     addVote,
-    addMember
+    deleteVote,
+    addMember,
+    deleteMember
   } = useFamilyTalkStore();
+
+  useEffect(() => {
+    let mounted = true;
+
+    const hydrateTheme = async () => {
+      try {
+        const rawTheme = await AsyncStorage.getItem(THEME_STORAGE_KEY);
+        if (rawTheme === "dark") {
+          setIsDarkMode(true);
+        }
+      } catch {
+        // Ignore theme restore failure and keep default mode.
+      } finally {
+        if (mounted) {
+          setIsThemeHydrated(true);
+        }
+      }
+    };
+
+    hydrateTheme();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isThemeHydrated) {
+      return;
+    }
+
+    AsyncStorage.setItem(THEME_STORAGE_KEY, isDarkMode ? "dark" : "light").catch(() => {
+      // Ignore theme persistence failure to avoid blocking UI interaction.
+    });
+  }, [isDarkMode, isThemeHydrated]);
 
   useEffect(() => {
     if (!isFirebaseConfigured || !auth) {
@@ -433,8 +694,9 @@ export default function App() {
     }
   };
 
-  const openDeleteModal = (scheduleId: string) => {
-    setDeleteTargetId(scheduleId);
+  const openDeleteModal = (targetId: string, targetType: DeleteTargetType = "schedule") => {
+    setDeleteTargetId(targetId);
+    setDeleteTargetType(targetType);
     setIsDeleteModalVisible(true);
     sheetAnim.setValue(0);
     Animated.timing(sheetAnim, {
@@ -454,14 +716,54 @@ export default function App() {
     }).start(() => {
       setIsDeleteModalVisible(false);
       setDeleteTargetId(null);
+      setDeleteTargetType("schedule");
     });
   };
 
-  const confirmDeleteSchedule = () => {
+  const confirmDeleteTarget = () => {
     if (deleteTargetId) {
-      deleteSchedule(deleteTargetId);
+      if (deleteTargetType === "schedule") {
+        deleteSchedule(deleteTargetId);
+      } else if (deleteTargetType === "vote") {
+        deleteVote(deleteTargetId);
+      } else {
+        deleteMember(deleteTargetId);
+      }
     }
     closeDeleteModal();
+  };
+
+  const toggleDarkMode = () => {
+    if (isThemeAnimating) {
+      return;
+    }
+
+    setIsThemeAnimating(true);
+
+    Animated.timing(themeFadeAnim, {
+      toValue: 0.72,
+      duration: 280,
+      easing: Easing.out(Easing.quad),
+      useNativeDriver: true
+    }).start(({ finished }) => {
+      if (!finished) {
+        setIsThemeAnimating(false);
+        return;
+      }
+
+      setIsDarkMode((prev) => !prev);
+
+      requestAnimationFrame(() => {
+        Animated.timing(themeFadeAnim, {
+          toValue: 1,
+          duration: 380,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true
+        }).start(() => {
+          setIsThemeAnimating(false);
+        });
+      });
+    });
   };
 
   const backdropOpacity = sheetAnim.interpolate({
@@ -477,9 +779,9 @@ export default function App() {
   if (!isFirebaseConfigured && !allowLocalMode) {
     return (
       <SafeAreaView style={styles.root}>
-        <StatusBar style="dark" />
+        <StatusBar style={isDarkMode ? "light" : "dark"} />
         <View style={styles.authContainer}>
-          <AuthBrand />
+          <AuthBrand themeColors={themeColors} />
           <View style={styles.authCard}>
             <Text style={styles.authTitle}>로그인 기능은 준비 중이에요</Text>
             <Text style={styles.muted}>지금은 로컬 모드로 계속 사용할 수 있어요.</Text>
@@ -495,7 +797,7 @@ export default function App() {
   if (isFirebaseConfigured && !authReady) {
     return (
       <SafeAreaView style={styles.root}>
-        <StatusBar style="dark" />
+        <StatusBar style={isDarkMode ? "light" : "dark"} />
         <View style={styles.authContainer}>
           <Text style={styles.muted}>로그인 상태를 확인하는 중...</Text>
         </View>
@@ -506,9 +808,9 @@ export default function App() {
   if (isFirebaseConfigured && !currentUser) {
     return (
       <SafeAreaView style={styles.root}>
-        <StatusBar style="dark" />
+        <StatusBar style={isDarkMode ? "light" : "dark"} />
         <View style={styles.authContainer}>
-          <AuthBrand />
+          <AuthBrand themeColors={themeColors} />
           <View style={styles.authCard}>
             <Text style={styles.authTitle}>패밀리톡 계정</Text>
             <Text style={styles.muted}>가족 계정으로 로그인해 계속 진행하세요.</Text>
@@ -519,7 +821,7 @@ export default function App() {
               placeholder="이메일"
               autoCapitalize="none"
               keyboardType="email-address"
-              placeholderTextColor={colors.textSecondary}
+              placeholderTextColor={themeColors.textSecondary}
               style={styles.input}
             />
             <TextInput
@@ -527,7 +829,7 @@ export default function App() {
               onChangeText={setPassword}
               placeholder="비밀번호"
               secureTextEntry
-              placeholderTextColor={colors.textSecondary}
+              placeholderTextColor={themeColors.textSecondary}
               style={styles.input}
             />
 
@@ -557,90 +859,128 @@ export default function App() {
 
   return (
     <SafeAreaView style={styles.root}>
-      <StatusBar style="dark" />
-      <View style={styles.header}>
-        <View style={styles.rowBetween}>
-          <View>
-            <Text style={styles.headerTitle}>패밀리톡</Text>
-            {isFirebaseConfigured && currentUser?.email ? (
-              <Text style={styles.headerSubTitle}>{currentUser.email}</Text>
-            ) : null}
-          </View>
-          {isFirebaseConfigured ? (
-            <Pressable style={styles.logoutButton} onPress={handleSignOut}>
-              <Text style={styles.logoutButtonText}>로그아웃</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-
-      {tab === "home" ? (
-        <HomeScreen
-          todaySchedules={todaySchedules}
-          meal={meal}
-          members={members}
-          onMealStatus={updateMealStatus}
-          onMealUpdate={updateMealInfo}
-          onRequestDeleteSchedule={openDeleteModal}
-        />
-      ) : null}
-      {tab === "schedule" ? (
-        <ScheduleScreen
-          schedules={schedules}
-          scheduleCount={schedules.length}
-          onAdd={addSchedule}
-          onRequestDelete={openDeleteModal}
-        />
-      ) : null}
-      {tab === "vote" ? <VoteScreen votes={votes} onVote={voteOption} onCreateVote={addVote} /> : null}
-      {tab === "family" ? <FamilyScreen members={members} onMood={setMemberMood} onAddMember={addMember} /> : null}
-
-      <View style={styles.tabBar}>
-        {tabs.map((item) => {
-          const selected = tab === item.key;
-          return (
-            <Pressable key={item.key} onPress={() => setTab(item.key)} style={styles.tabButton}>
-              <Text style={[styles.tabText, selected && styles.tabTextSelected]}>{item.label}</Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      <Modal visible={isDeleteModalVisible} transparent animationType="none" onRequestClose={closeDeleteModal}>
-        <View style={styles.modalRoot}>
-          <Animated.View style={[styles.modalBackdrop, { opacity: backdropOpacity }]}>
-            <Pressable style={styles.modalBackdropPressable} onPress={closeDeleteModal} />
-          </Animated.View>
-
-          <Animated.View
-            style={[
-              styles.deleteSheet,
-              {
-                opacity: sheetAnim,
-                transform: [{ translateY: sheetTranslateY }]
-              }
-            ]}
-          >
-            <Text style={styles.deleteSheetTitle}>정말로 삭제하시겠습니까?</Text>
-            <View style={styles.deleteSheetButtons}>
-              <Pressable style={styles.deleteSheetCancelButton} onPress={closeDeleteModal}>
-                <Text style={styles.deleteSheetCancelText}>취소</Text>
-              </Pressable>
-              <Pressable style={styles.deleteSheetConfirmButton} onPress={confirmDeleteSchedule}>
-                <Text style={styles.deleteSheetConfirmText}>네</Text>
-              </Pressable>
+      <StatusBar style={isDarkMode ? "light" : "dark"} />
+      <Animated.View style={{ flex: 1, opacity: themeFadeAnim }}>
+        <View style={styles.header}>
+          <View style={styles.rowBetween}>
+            <View>
+              <View style={styles.headerTitleRow}>
+                <Text style={styles.headerTitle}>패밀리톡</Text>
+                <Text style={styles.headerDateText}>{todayHeaderText}</Text>
+              </View>
+              {isFirebaseConfigured && currentUser?.email ? (
+                <Text style={styles.headerSubTitle}>{currentUser.email}</Text>
+              ) : null}
             </View>
-          </Animated.View>
+            <View style={styles.headerActions}>
+              {tab === "home" ? (
+                <Pressable style={styles.themeToggleButton} onPress={toggleDarkMode}>
+                  <Text style={styles.themeToggleButtonText}>{isDarkMode ? "다크 모드 해제" : "다크 모드"}</Text>
+                </Pressable>
+              ) : null}
+              {isFirebaseConfigured ? (
+                <Pressable style={styles.logoutButton} onPress={handleSignOut}>
+                  <Text style={styles.logoutButtonText}>로그아웃</Text>
+                </Pressable>
+              ) : null}
+            </View>
+          </View>
         </View>
-      </Modal>
+
+        {tab === "home" ? (
+          <HomeScreen
+            todaySchedules={todaySchedules}
+            schedules={schedules}
+            meal={meal}
+            members={members}
+            onMealStatus={updateMealStatus}
+            onMealUpdate={updateMealInfo}
+            onRequestDeleteSchedule={openDeleteModal}
+            themeColors={themeColors}
+          />
+        ) : null}
+        {tab === "schedule" ? (
+          <ScheduleScreen
+            schedules={schedules}
+            scheduleCount={schedules.length}
+            onAdd={addSchedule}
+            onRequestDelete={openDeleteModal}
+            themeColors={themeColors}
+          />
+        ) : null}
+        {tab === "vote" ? (
+          <VoteScreen
+            votes={votes}
+            onVote={voteOption}
+            onCreateVote={addVote}
+            onRequestDeleteVote={(voteId) => openDeleteModal(voteId, "vote")}
+            themeColors={themeColors}
+          />
+        ) : null}
+        {tab === "family" ? (
+          <FamilyScreen
+            members={members}
+            onMood={setMemberMood}
+            onAddMember={addMember}
+            onRequestDeleteMember={(memberId) => openDeleteModal(memberId, "member")}
+            themeColors={themeColors}
+          />
+        ) : null}
+
+        <View style={styles.tabBar}>
+          {tabs.map((item) => {
+            const selected = tab === item.key;
+            return (
+              <Pressable key={item.key} onPress={() => setTab(item.key)} style={styles.tabButton}>
+                <Text style={[styles.tabText, selected && styles.tabTextSelected]}>{item.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Modal visible={isDeleteModalVisible} transparent animationType="none" onRequestClose={closeDeleteModal}>
+          <View style={styles.modalRoot}>
+            <Animated.View style={[styles.modalBackdrop, { opacity: backdropOpacity }]}>
+              <Pressable style={styles.modalBackdropPressable} onPress={closeDeleteModal} />
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.deleteSheet,
+                {
+                  opacity: sheetAnim,
+                  transform: [{ translateY: sheetTranslateY }]
+                }
+              ]}
+            >
+              <Text style={styles.deleteSheetTitle}>
+                {deleteTargetType === "member"
+                  ? "가족 구성원을 삭제하시겠습니까?"
+                  : deleteTargetType === "vote"
+                    ? "투표를 삭제하시겠습니까?"
+                    : "정말로 삭제하시겠습니까?"}
+              </Text>
+              <View style={styles.deleteSheetButtons}>
+                <Pressable style={styles.deleteSheetCancelButton} onPress={closeDeleteModal}>
+                  <Text style={styles.deleteSheetCancelText}>취소</Text>
+                </Pressable>
+                <Pressable style={styles.deleteSheetConfirmButton} onPress={confirmDeleteTarget}>
+                  <Text style={styles.deleteSheetConfirmText}>네</Text>
+                </Pressable>
+              </View>
+            </Animated.View>
+          </View>
+        </Modal>
+      </Animated.View>
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(themeColors: ThemeColors) {
+  return StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colors.background
+    backgroundColor: themeColors.background
   },
   header: {
     paddingHorizontal: 16,
@@ -650,23 +990,52 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 28,
     fontWeight: "800",
-    color: colors.textPrimary
+    color: themeColors.textPrimary
+  },
+  headerTitleRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8
+  },
+  headerDateText: {
+    color: themeColors.textSecondary,
+    fontSize: 12,
+    fontWeight: "500",
+    marginBottom: 4
   },
   headerSubTitle: {
     marginTop: 2,
     fontSize: 13,
-    color: colors.textSecondary
+    color: themeColors.textSecondary
   },
-  logoutButton: {
+  headerActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8
+  },
+  themeToggleButton: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#fff"
+    backgroundColor: themeColors.card
+  },
+  themeToggleButtonText: {
+    color: themeColors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700"
+  },
+  logoutButton: {
+    borderWidth: 1,
+    borderColor: themeColors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: themeColors.card
   },
   logoutButtonText: {
-    color: colors.textSecondary,
+    color: themeColors.textSecondary,
     fontSize: 12,
     fontWeight: "700"
   },
@@ -685,8 +1054,8 @@ const styles = StyleSheet.create({
     height: 104,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: "#fff",
+    borderColor: themeColors.border,
+    backgroundColor: themeColors.card,
     alignItems: "center",
     justifyContent: "center"
   },
@@ -696,7 +1065,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.accent
+    backgroundColor: themeColors.accent
   },
   brandCircleBubbleTail: {
     position: "absolute",
@@ -709,30 +1078,30 @@ const styles = StyleSheet.create({
     borderTopWidth: 22,
     borderLeftColor: "transparent",
     borderRightColor: "transparent",
-    borderTopColor: colors.accent,
+    borderTopColor: themeColors.accent,
     transform: [{ rotate: "12deg" }]
   },
   brandTitle: {
-    color: colors.textPrimary,
+    color: themeColors.textPrimary,
     fontSize: 24,
     fontWeight: "800",
     letterSpacing: 1
   },
   brandSubtitle: {
-    color: colors.textSecondary,
+    color: themeColors.textSecondary,
     fontSize: 12,
     fontWeight: "600"
   },
   authCard: {
-    backgroundColor: colors.card,
+    backgroundColor: themeColors.card,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     borderRadius: 16,
     padding: 16,
     gap: 10
   },
   authTitle: {
-    color: colors.textPrimary,
+    color: themeColors.textPrimary,
     fontSize: 22,
     fontWeight: "800"
   },
@@ -755,35 +1124,151 @@ const styles = StyleSheet.create({
     paddingBottom: 94
   },
   card: {
-    backgroundColor: colors.card,
+    backgroundColor: themeColors.card,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     padding: 14,
     gap: 10
+  },
+  cardHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center"
   },
   cardTitle: {
     fontSize: 18,
     fontWeight: "700",
-    color: colors.textPrimary
+    color: themeColors.textPrimary
+  },
+  calendarOpenButton: {
+    borderWidth: 1,
+    borderColor: themeColors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: themeColors.card
+  },
+  calendarOpenButtonText: {
+    color: themeColors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700"
+  },
+  calendarModalRoot: {
+    flex: 1,
+    justifyContent: "center",
+    paddingHorizontal: 20
+  },
+  calendarBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.3)"
+  },
+  calendarPanel: {
+    maxHeight: "80%",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: themeColors.border,
+    backgroundColor: themeColors.card,
+    padding: 14,
+    gap: 10
+  },
+  calendarCloseButton: {
+    borderWidth: 1,
+    borderColor: themeColors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: themeColors.card
+  },
+  calendarCloseButtonText: {
+    color: themeColors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700"
+  },
+  calendarMonthMoveButton: {
+    borderWidth: 1,
+    borderColor: themeColors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: themeColors.card
+  },
+  calendarMonthTitle: {
+    fontSize: 16,
+    fontWeight: "800",
+    color: themeColors.textPrimary
+  },
+  calendarWeekHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    paddingHorizontal: 6
+  },
+  calendarWeekHeaderText: {
+    width: "14.28%",
+    textAlign: "center",
+    fontSize: 12,
+    fontWeight: "700",
+    color: themeColors.textSecondary
+  },
+  calendarGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    marginTop: 6
+  },
+  calendarCell: {
+    width: "14.28%",
+    minHeight: 74,
+    borderWidth: 1,
+    borderColor: themeColors.border,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+    backgroundColor: themeColors.card
+  },
+  calendarDayNumber: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: themeColors.textPrimary
+  },
+  calendarHolidayName: {
+    fontSize: 10,
+    fontWeight: "700",
+    color: "#e15252"
+  },
+  calendarSaturdayText: {
+    color: "#2f7aff"
+  },
+  calendarSundayHolidayText: {
+    color: "#e15252"
+  },
+  calendarEventText: {
+    fontSize: 10,
+    color: themeColors.textSecondary
+  },
+  calendarEventMore: {
+    fontSize: 10,
+    color: themeColors.accent,
+    fontWeight: "700"
+  },
+  calendarFooter: {
+    alignItems: "flex-end"
   },
   mainText: {
     fontSize: 15,
-    color: colors.textPrimary,
+    color: themeColors.textPrimary,
     fontWeight: "600"
   },
   muted: {
     fontSize: 13,
-    color: colors.textSecondary
+    color: themeColors.textSecondary
   },
   subtleCount: {
     fontSize: 12,
-    color: colors.textSecondary
+    color: themeColors.textSecondary
   },
   scheduleItem: {
-    backgroundColor: "#fff",
+    backgroundColor: themeColors.card,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     borderRadius: 12,
     paddingHorizontal: 12,
     paddingVertical: 10,
@@ -798,7 +1283,7 @@ const styles = StyleSheet.create({
   },
   scheduleTypeText: {
     fontSize: 12,
-    color: colors.textSecondary
+    color: themeColors.textSecondary
   },
   deleteButton: {
     borderWidth: 1,
@@ -806,7 +1291,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: "#fff"
+    backgroundColor: themeColors.card
   },
   deleteButtonText: {
     fontSize: 12,
@@ -825,20 +1310,20 @@ const styles = StyleSheet.create({
     flex: 1
   },
   deleteSheet: {
-    backgroundColor: "#fff",
+    backgroundColor: themeColors.card,
     borderTopLeftRadius: 18,
     borderTopRightRadius: 18,
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 24,
     borderTopWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     gap: 14
   },
   deleteSheetTitle: {
     fontSize: 17,
     fontWeight: "700",
-    color: colors.textPrimary,
+    color: themeColors.textPrimary,
     textAlign: "center"
   },
   deleteSheetButtons: {
@@ -848,15 +1333,15 @@ const styles = StyleSheet.create({
   deleteSheetCancelButton: {
     flex: 1,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     borderRadius: 10,
     paddingVertical: 11,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#fff"
+    backgroundColor: themeColors.card
   },
   deleteSheetCancelText: {
-    color: colors.textSecondary,
+    color: themeColors.textSecondary,
     fontSize: 14,
     fontWeight: "700"
   },
@@ -885,8 +1370,8 @@ const styles = StyleSheet.create({
   badge: {
     fontSize: 12,
     fontWeight: "700",
-    color: colors.accent,
-    backgroundColor: colors.accentSoft,
+    color: themeColors.accent,
+    backgroundColor: themeColors.accentSoft,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999
@@ -898,32 +1383,32 @@ const styles = StyleSheet.create({
   },
   chip: {
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 999,
-    backgroundColor: "#fff"
+    backgroundColor: themeColors.card
   },
   chipSelected: {
-    borderColor: colors.accent,
-    backgroundColor: colors.accentSoft
+    borderColor: themeColors.accent,
+    backgroundColor: themeColors.accentSoft
   },
   chipLabel: {
-    color: colors.textPrimary,
+    color: themeColors.textPrimary,
     fontSize: 12,
     fontWeight: "700"
   },
   input: {
-    backgroundColor: "#fff",
+    backgroundColor: themeColors.card,
     borderWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 10,
-    color: colors.textPrimary
+    color: themeColors.textPrimary
   },
   buttonPrimary: {
-    backgroundColor: colors.accent,
+    backgroundColor: themeColors.accent,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 10
@@ -933,30 +1418,30 @@ const styles = StyleSheet.create({
     fontWeight: "700"
   },
   buttonSecondary: {
-    backgroundColor: "#fff",
+    backgroundColor: themeColors.card,
     borderWidth: 1,
-    borderColor: colors.accent,
+    borderColor: themeColors.accent,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 10
   },
   buttonSecondaryText: {
-    color: colors.accent,
+    color: themeColors.accent,
     fontWeight: "700"
   },
   voteItem: {
     padding: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: "#fff",
+    borderColor: themeColors.border,
+    backgroundColor: themeColors.card,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center"
   },
   voteItemSelected: {
-    borderColor: colors.success,
-    backgroundColor: "#e9f8f2"
+    borderColor: themeColors.success,
+    backgroundColor: themeColors.accentSoft
   },
   tabBar: {
     position: "absolute",
@@ -964,9 +1449,9 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     flexDirection: "row",
-    backgroundColor: "#fff",
+    backgroundColor: themeColors.card,
     borderTopWidth: 1,
-    borderColor: colors.border,
+    borderColor: themeColors.border,
     paddingVertical: 8
   },
   tabButton: {
@@ -976,11 +1461,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8
   },
   tabText: {
-    color: colors.textSecondary,
+    color: themeColors.textSecondary,
     fontSize: 13,
     fontWeight: "700"
   },
   tabTextSelected: {
-    color: colors.accent
+    color: themeColors.accent
   }
 });
+}

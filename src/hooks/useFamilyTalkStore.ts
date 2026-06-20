@@ -12,6 +12,17 @@ type PersistedStore = {
   votes: Vote[];
 };
 
+const isLegacySampleVote = (vote: Vote) => {
+  return (
+    vote.id === "v1" &&
+    vote.topic === "주말 외식 장소" &&
+    vote.options.length === 3 &&
+    vote.options[0]?.label === "한식당" &&
+    vote.options[1]?.label === "피자" &&
+    vote.options[2]?.label === "중식"
+  );
+};
+
 export function useFamilyTalkStore() {
   const [members, setMembers] = useState<FamilyMember[]>(mockMembers);
   const [schedules, setSchedules] = useState<ScheduleItem[]>(mockSchedules);
@@ -44,7 +55,7 @@ export function useFamilyTalkStore() {
         }
 
         if (Array.isArray(parsed.votes)) {
-          setVotes(parsed.votes);
+          setVotes(parsed.votes.filter((vote) => !isLegacySampleVote(vote)));
         }
       } catch {
         // Ignore corrupted local data and continue with defaults.
@@ -174,6 +185,10 @@ export function useFamilyTalkStore() {
     setVotes((prev) => [vote, ...prev]);
   };
 
+  const deleteVote = (voteId: string) => {
+    setVotes((prev) => prev.filter((vote) => vote.id !== voteId));
+  };
+
   const addMember = (name: string, role: string) => {
     if (!name.trim() || !role.trim()) {
       return;
@@ -190,6 +205,10 @@ export function useFamilyTalkStore() {
     setMembers((prev) => [...prev, member]);
   };
 
+  const deleteMember = (memberId: string) => {
+    setMembers((prev) => prev.filter((member) => member.id !== memberId));
+  };
+
   return {
     members,
     schedules,
@@ -203,6 +222,8 @@ export function useFamilyTalkStore() {
     addSchedule,
     deleteSchedule,
     addVote,
-    addMember
+    deleteVote,
+    addMember,
+    deleteMember
   };
 }

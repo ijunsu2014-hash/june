@@ -10,6 +10,18 @@ export const colors = {
   warning: "#f3a72f"
 };
 
+export const darkColors = {
+  background: "#1e1e1e",
+  card: "#252526",
+  textPrimary: "#d4d4d4",
+  textSecondary: "#9da0a6",
+  accent: "#0e639c",
+  accentSoft: "#1f3b52",
+  success: "#3794ff",
+  border: "#3c3c3c",
+  warning: "#cca700"
+};
+
 export const moodMeta = {
   happy: { label: "기쁨", emoji: "😄" },
   normal: { label: "보통", emoji: "🙂" },
