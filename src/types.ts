@@ -24,6 +24,12 @@ export interface DailyMeal {
   shoppingMemo?: string;
 }
 
+export interface WishedMenu {
+  id: string;
+  title: string;
+  status: MealStatus;
+}
+
 export interface VoteOption {
   id: string;
   label: string;

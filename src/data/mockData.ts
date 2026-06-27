@@ -1,4 +1,4 @@
-import { DailyMeal, FamilyMember, ScheduleItem, Vote } from "../types";
+import { DailyMeal, WishedMenu, FamilyMember, ScheduleItem, Vote } from "../types";
 
 export const mockMembers: FamilyMember[] = [];
 
@@ -9,5 +9,7 @@ export const mockMeal: DailyMeal = {
   title: "",
   status: "home"
 };
+
+export const mockWishedMenus: WishedMenu[] = [];
 
 export const mockVotes: Vote[] = [];

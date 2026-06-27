@@ -25,17 +25,18 @@ import { auth, isFirebaseConfigured } from "./src/services/firebase";
 import { colors, darkColors, mealMeta, moodMeta } from "./src/theme";
 import { DailyMeal, FamilyMember, ScheduleItem, Vote } from "./src/types";
 
-type TabKey = "home" | "schedule" | "vote" | "family";
+type TabKey = "home" | "schedule" | "vote" | "family" | "settings";
 
 const tabs: { key: TabKey; label: string }[] = [
   { key: "home", label: "홈" },
   { key: "schedule", label: "일정" },
   { key: "vote", label: "투표" },
-  { key: "family", label: "가족" }
+  { key: "family", label: "가족" },
+  { key: "settings", label: "설정" }
 ];
 
 type ThemeColors = typeof colors;
-type DeleteTargetType = "schedule" | "member" | "vote";
+type DeleteTargetType = "schedule" | "member" | "vote" | "meal" | "wishedMenu";
 const THEME_STORAGE_KEY = "familytalk-theme-v1";
 
 const WEEKDAY_SHORT_KR = ["월", "화", "수", "목", "금", "토", "일"];
@@ -118,22 +119,32 @@ function HomeScreen({
   todaySchedules,
   schedules,
   meal,
+  wishedMenus,
   members,
   onMealStatus,
   onMealUpdate,
+  onAddWishedMenu,
   onRequestDeleteSchedule,
+  onRequestDeleteMeal,
+  onRequestDeleteWishedMenu,
   themeColors
 }: {
   todaySchedules: ScheduleItem[];
   schedules: ScheduleItem[];
   meal: DailyMeal;
+  wishedMenus: any[];
   members: FamilyMember[];
   onMealStatus: (status: DailyMeal["status"]) => void;
   onMealUpdate: (title: string, shoppingMemo?: string) => void;
+  onAddWishedMenu: (title: string, status: DailyMeal["status"]) => void;
   onRequestDeleteSchedule: (scheduleId: string) => void;
+  onRequestDeleteMeal: () => void;
+  onRequestDeleteWishedMenu: (menuId: string) => void;
   themeColors: ThemeColors;
 }) {
   const [mealTitle, setMealTitle] = useState(meal.title);
+  const [wishedMenuTitle, setWishedMenuTitle] = useState("");
+  const [wishedMenuStatus, setWishedMenuStatus] = useState<DailyMeal["status"]>("home");
   const [isCalendarVisible, setIsCalendarVisible] = useState(false);
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const now = new Date();
@@ -224,7 +235,6 @@ function HomeScreen({
         </SectionCard>
 
         <SectionCard title="오늘의 식단" themeColors={themeColors}>
-        <Text style={styles.mainText}>{meal.title}</Text>
         <TextInput
           value={mealTitle}
           onChangeText={setMealTitle}
@@ -254,6 +264,67 @@ function HomeScreen({
             </Pressable>
           ))}
         </View>
+        {meal.title ? (
+          <View style={styles.mealItem}>
+            <View style={styles.mealItemLeft}>
+              <Text style={styles.mealItemTitle}>{meal.title}</Text>
+              <Text style={styles.mealItemStatus}>{mealMeta[meal.status].label}</Text>
+            </View>
+            <Pressable onPress={() => onRequestDeleteMeal()} style={styles.deleteButton}>
+              <Text style={styles.deleteButtonText}>삭제</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Text style={styles.muted}>등록된 식단이 없습니다.</Text>
+        )}
+        </SectionCard>
+
+        <SectionCard title="희망 메뉴" themeColors={themeColors}>
+        <TextInput
+          value={wishedMenuTitle}
+          onChangeText={setWishedMenuTitle}
+          placeholder="메뉴 이름 입력"
+          placeholderTextColor={themeColors.textSecondary}
+          style={styles.input}
+        />
+        <Pressable
+          style={styles.buttonPrimary}
+          onPress={() => {
+            if (!wishedMenuTitle.trim()) {
+              return;
+            }
+            onAddWishedMenu(wishedMenuTitle.trim(), wishedMenuStatus);
+            setWishedMenuTitle("");
+          }}
+        >
+          <Text style={styles.buttonPrimaryText}>희망메뉴 추가</Text>
+        </Pressable>
+        <View style={styles.chipRow}>
+          {(Object.keys(mealMeta) as DailyMeal["status"][]).map((status) => (
+            <Pressable
+              key={status}
+              onPress={() => setWishedMenuStatus(status)}
+              style={[styles.chip, wishedMenuStatus === status && styles.chipSelected]}
+            >
+              <Text style={styles.chipLabel}>{mealMeta[status].label}</Text>
+            </Pressable>
+          ))}
+        </View>
+        {wishedMenus.length === 0 ? (
+          <Text style={styles.muted}>등록된 희망 메뉴가 없습니다.</Text>
+        ) : (
+          wishedMenus.map((menu) => (
+            <View key={menu.id} style={styles.mealItem}>
+              <View style={styles.mealItemLeft}>
+                <Text style={styles.mealItemTitle}>{menu.title}</Text>
+                <Text style={styles.mealItemStatus}>{mealMeta[menu.status].label}</Text>
+              </View>
+              <Pressable onPress={() => onRequestDeleteWishedMenu(menu.id)} style={styles.deleteButton}>
+                <Text style={styles.deleteButtonText}>삭제</Text>
+              </Pressable>
+            </View>
+          ))
+        )}
         </SectionCard>
 
         <SectionCard title="가족 컨디션" themeColors={themeColors}>
@@ -493,6 +564,31 @@ function VoteScreen({
   );
 }
 
+function SettingsScreen({
+  isDarkMode,
+  onToggleDarkMode,
+  themeColors
+}: {
+  isDarkMode: boolean;
+  onToggleDarkMode: () => void;
+  themeColors: ThemeColors;
+}) {
+  const styles = useMemo(() => createStyles(themeColors), [themeColors]);
+
+  return (
+    <ScrollView contentContainerStyle={styles.content}>
+      <SectionCard title="테마" themeColors={themeColors}>
+        <View style={styles.rowBetween}>
+          <Text style={styles.mainText}>{isDarkMode ? "다크 모드" : "라이트 모드"}</Text>
+          <Pressable style={styles.buttonPrimary} onPress={onToggleDarkMode}>
+            <Text style={styles.buttonPrimaryText}>{isDarkMode ? "라이트 모드" : "다크 모드"}</Text>
+          </Pressable>
+        </View>
+      </SectionCard>
+    </ScrollView>
+  );
+}
+
 function FamilyScreen({
   members,
   onMood,
@@ -593,10 +689,14 @@ export default function App() {
     schedules,
     todaySchedules,
     meal,
+    wishedMenus,
     votes,
     setMemberMood,
     updateMealStatus,
     updateMealInfo,
+    deleteMeal,
+    addWishedMenu,
+    deleteWishedMenu,
     voteOption,
     addSchedule,
     deleteSchedule,
@@ -726,8 +826,12 @@ export default function App() {
         deleteSchedule(deleteTargetId);
       } else if (deleteTargetType === "vote") {
         deleteVote(deleteTargetId);
-      } else {
+      } else if (deleteTargetType === "member") {
         deleteMember(deleteTargetId);
+      } else if (deleteTargetType === "meal") {
+        deleteMeal();
+      } else if (deleteTargetType === "wishedMenu") {
+        deleteWishedMenu(deleteTargetId);
       }
     }
     closeDeleteModal();
@@ -873,11 +977,6 @@ export default function App() {
               ) : null}
             </View>
             <View style={styles.headerActions}>
-              {tab === "home" ? (
-                <Pressable style={styles.themeToggleButton} onPress={toggleDarkMode}>
-                  <Text style={styles.themeToggleButtonText}>{isDarkMode ? "다크 모드 해제" : "다크 모드"}</Text>
-                </Pressable>
-              ) : null}
               {isFirebaseConfigured ? (
                 <Pressable style={styles.logoutButton} onPress={handleSignOut}>
                   <Text style={styles.logoutButtonText}>로그아웃</Text>
@@ -892,10 +991,14 @@ export default function App() {
             todaySchedules={todaySchedules}
             schedules={schedules}
             meal={meal}
+            wishedMenus={wishedMenus}
             members={members}
             onMealStatus={updateMealStatus}
             onMealUpdate={updateMealInfo}
+            onAddWishedMenu={addWishedMenu}
             onRequestDeleteSchedule={openDeleteModal}
+            onRequestDeleteMeal={() => openDeleteModal(meal.id, "meal")}
+            onRequestDeleteWishedMenu={(menuId) => openDeleteModal(menuId, "wishedMenu")}
             themeColors={themeColors}
           />
         ) : null}
@@ -923,6 +1026,13 @@ export default function App() {
             onMood={setMemberMood}
             onAddMember={addMember}
             onRequestDeleteMember={(memberId) => openDeleteModal(memberId, "member")}
+            themeColors={themeColors}
+          />
+        ) : null}
+        {tab === "settings" ? (
+          <SettingsScreen
+            isDarkMode={isDarkMode}
+            onToggleDarkMode={toggleDarkMode}
             themeColors={themeColors}
           />
         ) : null}
@@ -958,7 +1068,9 @@ export default function App() {
                   ? "가족 구성원을 삭제하시겠습니까?"
                   : deleteTargetType === "vote"
                     ? "투표를 삭제하시겠습니까?"
-                    : "정말로 삭제하시겠습니까?"}
+                    : deleteTargetType === "wishedMenu"
+                      ? "희망 메뉴를 삭제하시겠습니까?"
+                      : "정말로 삭제하시겠습니까?"}
               </Text>
               <View style={styles.deleteSheetButtons}>
                 <Pressable style={styles.deleteSheetCancelButton} onPress={closeDeleteModal}>
@@ -1458,7 +1570,8 @@ function createStyles(themeColors: ThemeColors) {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    paddingVertical: 8
+    paddingVertical: 16,
+    paddingHorizontal: 12
   },
   tabText: {
     color: themeColors.textSecondary,
@@ -1467,6 +1580,30 @@ function createStyles(themeColors: ThemeColors) {
   },
   tabTextSelected: {
     color: themeColors.accent
+  },
+  mealItem: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    backgroundColor: themeColors.accentSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 6,
+    marginTop: 12
+  },
+  mealItemLeft: {
+    flex: 1,
+    marginRight: 8
+  },
+  mealItemTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: themeColors.textPrimary,
+    marginBottom: 2
+  },
+  mealItemStatus: {
+    fontSize: 11,
+    color: themeColors.textSecondary
   }
 });
 }

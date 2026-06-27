@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useMemo, useState } from "react";
-import { mockMeal, mockMembers, mockSchedules, mockVotes } from "../data/mockData";
-import { DailyMeal, FamilyMember, MoodType, ScheduleItem, Vote } from "../types";
+import { mockMeal, mockMembers, mockSchedules, mockVotes, mockWishedMenus } from "../data/mockData";
+import { DailyMeal, WishedMenu, FamilyMember, MoodType, ScheduleItem, Vote } from "../types";
 
 const STORAGE_KEY = "familytalk-store-v1";
 
@@ -9,6 +9,7 @@ type PersistedStore = {
   members: FamilyMember[];
   schedules: ScheduleItem[];
   meal: DailyMeal;
+  wishedMenus: WishedMenu[];
   votes: Vote[];
 };
 
@@ -27,6 +28,7 @@ export function useFamilyTalkStore() {
   const [members, setMembers] = useState<FamilyMember[]>(mockMembers);
   const [schedules, setSchedules] = useState<ScheduleItem[]>(mockSchedules);
   const [meal, setMeal] = useState<DailyMeal>(mockMeal);
+  const [wishedMenus, setWishedMenus] = useState<WishedMenu[]>(mockWishedMenus);
   const [votes, setVotes] = useState<Vote[]>(mockVotes);
   const [isHydrated, setIsHydrated] = useState(false);
 
@@ -52,6 +54,10 @@ export function useFamilyTalkStore() {
 
         if (parsed.meal && typeof parsed.meal === "object") {
           setMeal(parsed.meal as DailyMeal);
+        }
+
+        if (Array.isArray(parsed.wishedMenus)) {
+          setWishedMenus(parsed.wishedMenus);
         }
 
         if (Array.isArray(parsed.votes)) {
@@ -82,13 +88,14 @@ export function useFamilyTalkStore() {
       members,
       schedules,
       meal,
+      wishedMenus,
       votes
     };
 
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState)).catch(() => {
       // Ignore storage failures to avoid blocking UI interaction.
     });
-  }, [isHydrated, members, schedules, meal, votes]);
+  }, [isHydrated, members, schedules, meal, wishedMenus, votes]);
 
   const todaySchedules = useMemo(() => {
     const today = new Date();
@@ -118,6 +125,32 @@ export function useFamilyTalkStore() {
       title,
       shoppingMemo: shoppingMemo?.trim() ? shoppingMemo.trim() : undefined
     }));
+  };
+
+  const deleteMeal = () => {
+    setMeal({
+      id: `m-${Date.now()}`,
+      title: "",
+      status: "home"
+    });
+  };
+
+  const addWishedMenu = (title: string, status: WishedMenu["status"]) => {
+    if (!title.trim()) {
+      return;
+    }
+
+    const wishedMenu: WishedMenu = {
+      id: `w-${Date.now()}`,
+      title: title.trim(),
+      status
+    };
+
+    setWishedMenus((prev) => [...prev, wishedMenu]);
+  };
+
+  const deleteWishedMenu = (menuId: string) => {
+    setWishedMenus((prev) => prev.filter((menu) => menu.id !== menuId));
   };
 
   const voteOption = (voteId: string, optionId: string) => {
@@ -214,10 +247,14 @@ export function useFamilyTalkStore() {
     schedules,
     todaySchedules,
     meal,
+    wishedMenus,
     votes,
     setMemberMood,
     updateMealStatus,
     updateMealInfo,
+    deleteMeal,
+    addWishedMenu,
+    deleteWishedMenu,
     voteOption,
     addSchedule,
     deleteSchedule,
