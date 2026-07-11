@@ -13,6 +13,7 @@
   "dependencies": {
     "@expo/metro-runtime": "~5.0.5",
     "@react-native-async-storage/async-storage": "^1.24.0",
+    "crypto-js": "^4.2.0",
     "expo": "~53.0.12",
     "expo-status-bar": "~2.2.3",
     "firebase": "^11.10.0",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@azure/static-web-apps-cli": "^2.0.9",
+    "@types/crypto-js": "^4.2.2",
     "@types/node": "^25.9.3",
     "@types/react": "~19.0.10",
     "typescript": "~5.8.3"

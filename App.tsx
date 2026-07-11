@@ -1,6 +1,7 @@
 import { StatusBar } from "expo-status-bar";
 import React, { useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as CryptoJS from "crypto-js";
 import {
   Animated,
   Easing,
@@ -16,14 +17,24 @@ import {
 import {
   User,
   createUserWithEmailAndPassword,
+  deleteUser,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut
 } from "firebase/auth";
 import { useFamilyTalkStore } from "./src/hooks/useFamilyTalkStore";
-import { auth, isFirebaseConfigured } from "./src/services/firebase";
+import { auth, db, isFirebaseConfigured } from "./src/services/firebase";
+import {
+  FamilyMembership,
+  FamilyProfile,
+  createFamilyAndJoin,
+  generateFamilyCode,
+  getFamilyProfile,
+  getUserMembership,
+  joinFamilyWithCode
+} from "./src/services/familyRoom";
 import { colors, darkColors, mealMeta, moodMeta } from "./src/theme";
-import { DailyMeal, FamilyMember, ScheduleItem, Vote } from "./src/types";
+import { DailyMeal, FamilyMember, ScheduleItem, Vote, WishedMenu } from "./src/types";
 
 type TabKey = "home" | "schedule" | "vote" | "family" | "settings";
 
@@ -38,6 +49,38 @@ const tabs: { key: TabKey; label: string }[] = [
 type ThemeColors = typeof colors;
 type DeleteTargetType = "schedule" | "member" | "vote" | "meal" | "wishedMenu";
 const THEME_STORAGE_KEY = "familytalk-theme-v1";
+const LOCAL_AUTH_STORAGE_KEY = "familytalk-local-auth-v1";
+const LOCAL_FAMILY_STORE_KEY = "familytalk-local-family-store-v1";
+const LOCAL_ACCOUNT_STORAGE_KEY = "familytalk-local-accounts-v1";
+const MAX_JOIN_FAIL_COUNT = 5;
+const JOIN_LOCK_SECONDS = 30;
+
+type LocalAuthUser = {
+  uid: string;
+  nickname: string;
+  email?: string;
+};
+
+type LocalAccountRecord = {
+  uid: string;
+  nickname: string;
+  emailKey: string;
+  email?: string;
+  passwordHash: string;
+};
+
+type LocalFamilyRecord = {
+  id: string;
+  name: string;
+  codeHash: string;
+  createdByUid: string;
+  codeCipher?: string;
+};
+
+type LocalFamilyStore = {
+  families: LocalFamilyRecord[];
+  memberships: Record<string, FamilyMembership>;
+};
 
 const WEEKDAY_SHORT_KR = ["월", "화", "수", "목", "금", "토", "일"];
 const SOLAR_HOLIDAY_NAME_MAP: Record<string, string> = {
@@ -132,7 +175,7 @@ function HomeScreen({
   todaySchedules: ScheduleItem[];
   schedules: ScheduleItem[];
   meal: DailyMeal;
-  wishedMenus: any[];
+  wishedMenus: WishedMenu[];
   members: FamilyMember[];
   onMealStatus: (status: DailyMeal["status"]) => void;
   onMealUpdate: (title: string, shoppingMemo?: string) => void;
@@ -567,10 +610,26 @@ function VoteScreen({
 function SettingsScreen({
   isDarkMode,
   onToggleDarkMode,
+  canDeleteAccount,
+  isDeleteAccountPending,
+  accountActionError,
+  onDeleteAccount,
+  canRevealFamilyCode,
+  isFamilyCodeVisible,
+  familyCode,
+  onToggleFamilyCode,
   themeColors
 }: {
   isDarkMode: boolean;
   onToggleDarkMode: () => void;
+  canDeleteAccount: boolean;
+  isDeleteAccountPending: boolean;
+  accountActionError: string;
+  onDeleteAccount: () => void;
+  canRevealFamilyCode: boolean;
+  isFamilyCodeVisible: boolean;
+  familyCode: string;
+  onToggleFamilyCode: () => void;
   themeColors: ThemeColors;
 }) {
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
@@ -585,6 +644,29 @@ function SettingsScreen({
           </Pressable>
         </View>
       </SectionCard>
+
+      <SectionCard title="가족 코드" themeColors={themeColors}>
+        {canRevealFamilyCode ? (
+          <>
+            <Text style={styles.securityCode}>{isFamilyCodeVisible ? familyCode : "•••••-•••••"}</Text>
+            <Pressable style={styles.buttonSecondary} onPress={onToggleFamilyCode}>
+              <Text style={styles.buttonSecondaryText}>{isFamilyCodeVisible ? "코드 숨기기" : "코드 보기"}</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Text style={styles.muted}>현재 계정으로는 가족 코드를 확인할 수 없습니다.</Text>
+        )}
+      </SectionCard>
+
+      {canDeleteAccount ? (
+        <SectionCard title="계정" themeColors={themeColors}>
+          <Text style={styles.muted}>탈퇴하면 현재 계정 세션이 종료됩니다.</Text>
+          <Pressable style={styles.buttonDanger} onPress={onDeleteAccount} disabled={isDeleteAccountPending}>
+            <Text style={styles.buttonDangerText}>{isDeleteAccountPending ? "처리 중..." : "탈퇴"}</Text>
+          </Pressable>
+          {accountActionError ? <Text style={styles.authErrorText}>{accountActionError}</Text> : null}
+        </SectionCard>
+      ) : null}
     </ScrollView>
   );
 }
@@ -666,18 +748,42 @@ function FamilyScreen({
 export default function App() {
   const [tab, setTab] = useState<TabKey>("home");
   const [isDarkMode, setIsDarkMode] = useState(false);
-  const [allowLocalMode, setAllowLocalMode] = useState(false);
-  const [authReady, setAuthReady] = useState(!isFirebaseConfigured);
+  const [authReady, setAuthReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [localAuthUser, setLocalAuthUser] = useState<LocalAuthUser | null>(null);
+  const [nickname, setNickname] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState("");
   const [authPending, setAuthPending] = useState(false);
+  const [familyReady, setFamilyReady] = useState(!isFirebaseConfigured);
+  const [familyMembership, setFamilyMembership] = useState<FamilyMembership | null>(null);
+  const [familyProfile, setFamilyProfile] = useState<FamilyProfile | null>(null);
+  const [familyStep, setFamilyStep] = useState<"create" | "join">("create");
+  const [familyNameInput, setFamilyNameInput] = useState("");
+  const [displayNameInput, setDisplayNameInput] = useState("");
+  const [joinCodeInput, setJoinCodeInput] = useState("");
+  const [familyError, setFamilyError] = useState("");
+  const [familyPending, setFamilyPending] = useState(false);
+  const [issuedFamilyCode, setIssuedFamilyCode] = useState("");
+  const [showFamilyCode, setShowFamilyCode] = useState(false);
+  const [settingsFamilyCode, setSettingsFamilyCode] = useState("");
+  const [showSettingsFamilyCode, setShowSettingsFamilyCode] = useState(false);
+  const [joinFailCount, setJoinFailCount] = useState(0);
+  const [joinLockedUntil, setJoinLockedUntil] = useState<number | null>(null);
+  const [joinRemainSeconds, setJoinRemainSeconds] = useState(0);
+  const [isDeleteAccountPending, setIsDeleteAccountPending] = useState(false);
+  const [accountActionError, setAccountActionError] = useState("");
+  const [isWithdrawConfirmVisible, setIsWithdrawConfirmVisible] = useState(false);
 
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null);
   const [deleteTargetType, setDeleteTargetType] = useState<DeleteTargetType>("schedule");
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
+  const [isSignupConfirmVisible, setIsSignupConfirmVisible] = useState(false);
   const [sheetAnim] = useState(() => new Animated.Value(0));
+  const [signupSheetAnim] = useState(() => new Animated.Value(0));
+  const [withdrawSheetAnim] = useState(() => new Animated.Value(0));
   const [themeFadeAnim] = useState(() => new Animated.Value(1));
   const [isThemeAnimating, setIsThemeAnimating] = useState(false);
   const [isThemeHydrated, setIsThemeHydrated] = useState(false);
@@ -742,6 +848,47 @@ export default function App() {
   }, [isDarkMode, isThemeHydrated]);
 
   useEffect(() => {
+    if (isFirebaseConfigured) {
+      return;
+    }
+
+    let mounted = true;
+
+    const hydrateLocalAuth = async () => {
+      try {
+        const raw =
+          (await AsyncStorage.getItem(LOCAL_AUTH_STORAGE_KEY)) ||
+          (typeof localStorage !== "undefined" ? localStorage.getItem(LOCAL_AUTH_STORAGE_KEY) : null);
+        if (!raw) {
+          return;
+        }
+
+        const parsed = JSON.parse(raw) as LocalAuthUser;
+        const fallbackNickname = parsed?.email ? parsed.email.split("@")[0] : "사용자";
+        if (parsed?.uid && mounted) {
+          setLocalAuthUser({
+            uid: parsed.uid,
+            nickname: parsed.nickname || fallbackNickname,
+            email: parsed.email
+          });
+        }
+      } catch {
+        // Ignore local auth restore failures in demo mode.
+      } finally {
+        if (mounted) {
+          setAuthReady(true);
+        }
+      }
+    };
+
+    hydrateLocalAuth();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isFirebaseConfigured || !auth) {
       return;
     }
@@ -750,18 +897,381 @@ export default function App() {
       setCurrentUser(user);
       setAuthReady(true);
       setAuthError("");
+      setFamilyError("");
     });
 
     return unsubscribe;
   }, []);
 
-  const runAuthAction = async (mode: "login" | "signup") => {
-    if (!auth) {
+  useEffect(() => {
+    const safeDb = db;
+
+    let mounted = true;
+    setFamilyReady(false);
+
+    const hydrateFamily = async () => {
+      try {
+        if (isFirebaseConfigured && safeDb) {
+          if (!currentUser) {
+            if (!mounted) {
+              return;
+            }
+
+            setFamilyMembership(null);
+            setFamilyProfile(null);
+            setIssuedFamilyCode("");
+            return;
+          }
+
+          const membership = await getUserMembership(safeDb, currentUser.uid);
+
+          if (!mounted) {
+            return;
+          }
+
+          if (!membership) {
+            setFamilyMembership(null);
+            setFamilyProfile(null);
+            return;
+          }
+
+          setFamilyMembership(membership);
+          const profile = await getFamilyProfile(safeDb, membership.familyId);
+
+          if (!mounted) {
+            return;
+          }
+
+          setFamilyProfile(profile);
+          return;
+        }
+
+        if (!localAuthUser) {
+          setFamilyMembership(null);
+          setFamilyProfile(null);
+          setSettingsFamilyCode("");
+          setShowSettingsFamilyCode(false);
+          return;
+        }
+
+        const rawStore = await AsyncStorage.getItem(LOCAL_FAMILY_STORE_KEY);
+        const localStore: LocalFamilyStore = rawStore
+          ? (JSON.parse(rawStore) as LocalFamilyStore)
+          : { families: [], memberships: {} };
+
+        const membership = localStore.memberships[localAuthUser.uid];
+        if (!membership) {
+          setFamilyMembership(null);
+          setFamilyProfile(null);
+          setSettingsFamilyCode("");
+          setShowSettingsFamilyCode(false);
+          return;
+        }
+
+        const family = localStore.families.find((item) => item.id === membership.familyId) ?? null;
+        setFamilyMembership(membership);
+        setFamilyProfile(family ? { id: family.id, name: family.name } : null);
+
+        if (membership.role === "owner" && family?.codeCipher) {
+          const decoded = decryptLocalFamilyCode(family.codeCipher, localAuthUser.uid);
+          setSettingsFamilyCode(decoded);
+        } else {
+          setSettingsFamilyCode("");
+          setShowSettingsFamilyCode(false);
+        }
+      } catch {
+        if (!mounted) {
+          return;
+        }
+
+        setFamilyError("가족 방 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+      } finally {
+        if (mounted) {
+          setFamilyReady(true);
+        }
+      }
+    };
+
+    hydrateFamily();
+
+    return () => {
+      mounted = false;
+    };
+  }, [currentUser, localAuthUser]);
+
+  useEffect(() => {
+    if (!joinLockedUntil) {
+      setJoinRemainSeconds(0);
       return;
     }
 
-    if (!email.trim() || !password.trim()) {
-      setAuthError("이메일과 비밀번호를 입력해 주세요.");
+    const updateRemain = () => {
+      const remain = Math.max(0, Math.ceil((joinLockedUntil - Date.now()) / 1000));
+      setJoinRemainSeconds(remain);
+
+      if (remain === 0) {
+        setJoinLockedUntil(null);
+        setJoinFailCount(0);
+      }
+    };
+
+    updateRemain();
+    const timer = setInterval(updateRemain, 1000);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [joinLockedUntil]);
+
+  const normalizeJoinCode = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
+
+  const formatJoinCode = (value: string) => {
+    const normalized = normalizeJoinCode(value);
+    if (normalized.length <= 5) {
+      return normalized;
+    }
+
+    return `${normalized.slice(0, 5)}-${normalized.slice(5)}`;
+  };
+
+  const resolveErrorMessage = (error: unknown, fallback: string) => {
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+
+    return fallback;
+  };
+
+  const isSignedIn = isFirebaseConfigured ? Boolean(currentUser) : Boolean(localAuthUser);
+  const activeUserId = isFirebaseConfigured ? currentUser?.uid ?? null : localAuthUser?.uid ?? null;
+  const activeUserLabel = isFirebaseConfigured
+    ? currentUser?.email ?? null
+    : localAuthUser?.nickname || localAuthUser?.email || null;
+
+  const normalizeCodeForHash = (value: string) => normalizeJoinCode(value);
+  const hashFamilyCode = (normalizedCode: string) =>
+    CryptoJS.SHA256(`${normalizedCode}|familytalk-code-v1`).toString(CryptoJS.enc.Hex);
+
+  const getLocalCodeCipherKey = (uid: string) => `familytalk-local-code-v1|${uid}`;
+  const encryptLocalFamilyCode = (code: string, uid: string) =>
+    CryptoJS.AES.encrypt(code, getLocalCodeCipherKey(uid)).toString();
+  const decryptLocalFamilyCode = (cipher: string, uid: string) => {
+    const bytes = CryptoJS.AES.decrypt(cipher, getLocalCodeCipherKey(uid));
+    return bytes.toString(CryptoJS.enc.Utf8);
+  };
+
+  const loadLocalFamilyStore = async (): Promise<LocalFamilyStore> => {
+    const rawStore = await AsyncStorage.getItem(LOCAL_FAMILY_STORE_KEY);
+    if (!rawStore) {
+      return { families: [], memberships: {} };
+    }
+
+    return JSON.parse(rawStore) as LocalFamilyStore;
+  };
+
+  const saveLocalFamilyStore = async (store: LocalFamilyStore) => {
+    await AsyncStorage.setItem(LOCAL_FAMILY_STORE_KEY, JSON.stringify(store));
+  };
+
+  const persistLocalAuthUser = async (user: LocalAuthUser) => {
+    const serialized = JSON.stringify(user);
+    await AsyncStorage.setItem(LOCAL_AUTH_STORAGE_KEY, serialized);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(LOCAL_AUTH_STORAGE_KEY, serialized);
+    }
+  };
+
+  const clearPersistedLocalAuthUser = async () => {
+    await AsyncStorage.removeItem(LOCAL_AUTH_STORAGE_KEY);
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem(LOCAL_AUTH_STORAGE_KEY);
+    }
+  };
+
+  const loadLocalAccounts = async (): Promise<LocalAccountRecord[]> => {
+    const raw =
+      (await AsyncStorage.getItem(LOCAL_ACCOUNT_STORAGE_KEY)) ||
+      (typeof localStorage !== "undefined" ? localStorage.getItem(LOCAL_ACCOUNT_STORAGE_KEY) : null);
+
+    if (!raw) {
+      return [];
+    }
+
+    return JSON.parse(raw) as LocalAccountRecord[];
+  };
+
+  const saveLocalAccounts = async (accounts: LocalAccountRecord[]) => {
+    const serialized = JSON.stringify(accounts);
+    await AsyncStorage.setItem(LOCAL_ACCOUNT_STORAGE_KEY, serialized);
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(LOCAL_ACCOUNT_STORAGE_KEY, serialized);
+    }
+  };
+
+  const getLocalPasswordHash = (emailKey: string, passwordValue: string) =>
+    CryptoJS.SHA256(`local-auth-v1|${emailKey}|${passwordValue}`).toString(CryptoJS.enc.Hex);
+
+  const handleCreateFamily = async () => {
+    if (!activeUserId) {
+      return;
+    }
+
+    setFamilyPending(true);
+    setFamilyError("");
+
+    try {
+      if (isFirebaseConfigured && db) {
+        const result = await createFamilyAndJoin(db, activeUserId, familyNameInput, displayNameInput);
+        setFamilyMembership(result.membership);
+        setFamilyProfile(result.profile);
+        setIssuedFamilyCode(result.familyCode);
+      } else {
+        const safeFamilyName = familyNameInput.trim();
+        const safeDisplayName = displayNameInput.trim();
+
+        if (!safeFamilyName || !safeDisplayName) {
+          throw new Error("가족 이름과 내 이름을 입력해 주세요.");
+        }
+
+        const localStore = await loadLocalFamilyStore();
+        if (localStore.memberships[activeUserId]) {
+          throw new Error("이미 참여 중인 가족 방이 있습니다.");
+        }
+
+        let generatedCode = "";
+        let codeHash = "";
+        let attempts = 0;
+
+        while (attempts < 10) {
+          generatedCode = generateFamilyCode();
+          codeHash = hashFamilyCode(normalizeCodeForHash(generatedCode));
+          if (!localStore.families.some((family) => family.codeHash === codeHash)) {
+            break;
+          }
+
+          attempts += 1;
+        }
+
+        if (!generatedCode || !codeHash || attempts >= 10) {
+          throw new Error("코드 생성에 실패했습니다. 다시 시도해 주세요.");
+        }
+
+        const familyId = `lf-${Date.now()}`;
+        localStore.families.push({
+          id: familyId,
+          name: safeFamilyName,
+          codeHash,
+          createdByUid: activeUserId,
+          codeCipher: encryptLocalFamilyCode(generatedCode, activeUserId)
+        });
+        localStore.memberships[activeUserId] = {
+          familyId,
+          role: "owner",
+          displayName: safeDisplayName
+        };
+
+        await saveLocalFamilyStore(localStore);
+
+        setFamilyMembership(localStore.memberships[activeUserId]);
+        setFamilyProfile({ id: familyId, name: safeFamilyName });
+        setIssuedFamilyCode(generatedCode);
+        setSettingsFamilyCode(generatedCode);
+        setShowSettingsFamilyCode(false);
+      }
+
+      setShowFamilyCode(false);
+      setFamilyNameInput("");
+      setJoinCodeInput("");
+      setJoinFailCount(0);
+      setJoinLockedUntil(null);
+    } catch (error) {
+      setFamilyError(resolveErrorMessage(error, "가족 방 생성에 실패했습니다. 다시 시도해 주세요."));
+    } finally {
+      setFamilyPending(false);
+    }
+  };
+
+  const handleJoinFamily = async () => {
+    if (!activeUserId) {
+      return;
+    }
+
+    if (joinLockedUntil && joinLockedUntil > Date.now()) {
+      setFamilyError(`코드 입력 시도가 많아 잠시 잠겼어요. ${joinRemainSeconds}초 후 다시 시도해 주세요.`);
+      return;
+    }
+
+    setFamilyPending(true);
+    setFamilyError("");
+
+    try {
+      if (isFirebaseConfigured && db) {
+        const result = await joinFamilyWithCode(db, activeUserId, joinCodeInput, displayNameInput);
+        setFamilyMembership(result.membership);
+        setFamilyProfile(result.profile);
+      } else {
+        const safeDisplayName = displayNameInput.trim();
+        if (!safeDisplayName) {
+          throw new Error("내 이름을 입력해 주세요.");
+        }
+
+        const normalizedCode = normalizeCodeForHash(joinCodeInput);
+        if (normalizedCode.length < 8) {
+          throw new Error("코드 형식이 올바르지 않습니다.");
+        }
+
+        const localStore = await loadLocalFamilyStore();
+        if (localStore.memberships[activeUserId]) {
+          throw new Error("이미 참여 중인 가족 방이 있습니다.");
+        }
+
+        const codeHash = hashFamilyCode(normalizedCode);
+        const family = localStore.families.find((item) => item.codeHash === codeHash);
+        if (!family) {
+          throw new Error("코드가 일치하지 않습니다.");
+        }
+
+        localStore.memberships[activeUserId] = {
+          familyId: family.id,
+          role: "member",
+          displayName: safeDisplayName
+        };
+
+        await saveLocalFamilyStore(localStore);
+
+        setFamilyMembership(localStore.memberships[activeUserId]);
+        setFamilyProfile({ id: family.id, name: family.name });
+        setSettingsFamilyCode("");
+        setShowSettingsFamilyCode(false);
+      }
+
+      setIssuedFamilyCode("");
+      setJoinCodeInput("");
+      setJoinFailCount(0);
+      setJoinLockedUntil(null);
+    } catch (error) {
+      const nextFailCount = joinFailCount + 1;
+      setJoinFailCount(nextFailCount);
+
+      if (nextFailCount >= MAX_JOIN_FAIL_COUNT) {
+        const nextLockedUntil = Date.now() + JOIN_LOCK_SECONDS * 1000;
+        setJoinLockedUntil(nextLockedUntil);
+      }
+
+      setFamilyError(resolveErrorMessage(error, "가족 코드 확인에 실패했습니다. 다시 시도해 주세요."));
+    } finally {
+      setFamilyPending(false);
+    }
+  };
+
+  const runAuthAction = async (mode: "login" | "signup") => {
+    if (!nickname.trim() || !email.trim() || !password.trim()) {
+      setAuthError("닉네임, 이메일, 비밀번호를 모두 입력해 주세요.");
+      return;
+    }
+
+    if (password.trim().length < 4) {
+      setAuthError("비밀번호는 최소 4자 이상이어야 합니다.");
       return;
     }
 
@@ -769,10 +1279,81 @@ export default function App() {
     setAuthError("");
 
     try {
-      if (mode === "signup") {
-        await createUserWithEmailAndPassword(auth, email.trim(), password);
+      if (!isFirebaseConfigured) {
+        const normalizedNickname = nickname.trim();
+        const normalizedEmail = email.trim().toLowerCase();
+        const emailKey = normalizedEmail;
+        const localAccounts = await loadLocalAccounts();
+        const account = localAccounts.find((item) => item.emailKey === emailKey);
+
+        if (mode === "signup") {
+          if (account) {
+            setAuthError("이미 존재하는 계정입니다.");
+            return;
+          }
+
+          const uidHash = CryptoJS.SHA256(`local-user:${emailKey}`).toString(CryptoJS.enc.Hex).slice(0, 24);
+          const nextAccount: LocalAccountRecord = {
+            uid: `local-${uidHash}`,
+            nickname: normalizedNickname,
+            emailKey,
+            email: normalizedEmail || undefined,
+            passwordHash: getLocalPasswordHash(emailKey, password)
+          };
+
+          await saveLocalAccounts([...localAccounts, nextAccount]);
+
+          const localUser = {
+            uid: nextAccount.uid,
+            nickname: nextAccount.nickname,
+            email: nextAccount.email
+          };
+          setLocalAuthUser(localUser);
+          await persistLocalAuthUser(localUser);
+          setAuthReady(true);
+          return;
+        }
+
+        if (!account) {
+          setAuthError("존재하지 않는 계정입니다.");
+          return;
+        }
+
+        if (account.nickname !== normalizedNickname) {
+          setAuthError("닉네임이 일치하지 않습니다.");
+          return;
+        }
+
+        const expectedHash = getLocalPasswordHash(emailKey, password);
+        if (account.passwordHash !== expectedHash) {
+          setAuthError("비밀번호가 올바르지 않습니다.");
+          return;
+        }
+
+        const localUser = {
+          uid: account.uid,
+          nickname: account.nickname,
+          email: account.email
+        };
+
+        setLocalAuthUser(localUser);
+        await persistLocalAuthUser(localUser);
+        setAuthReady(true);
       } else {
-        await signInWithEmailAndPassword(auth, email.trim(), password);
+        if (!auth) {
+          throw new Error("인증 초기화에 실패했습니다.");
+        }
+
+        if (!email.trim()) {
+          setAuthError("현재 모드에서는 이메일이 필요합니다.");
+          return;
+        }
+
+        if (mode === "signup") {
+          await createUserWithEmailAndPassword(auth, email.trim(), password);
+        } else {
+          await signInWithEmailAndPassword(auth, email.trim(), password);
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "인증 중 오류가 발생했습니다.";
@@ -783,14 +1364,85 @@ export default function App() {
   };
 
   const handleSignOut = async () => {
-    if (!auth) {
+    try {
+      if (isFirebaseConfigured) {
+        if (!auth) {
+          return;
+        }
+
+        await signOut(auth);
+      } else {
+        setLocalAuthUser(null);
+        await clearPersistedLocalAuthUser();
+      }
+
+      setFamilyMembership(null);
+      setFamilyProfile(null);
+      setIssuedFamilyCode("");
+      setSettingsFamilyCode("");
+      setShowSettingsFamilyCode(false);
+      setFamilyError("");
+      setFamilyStep("create");
+      setFamilyReady(true);
+      setAccountActionError("");
+    } catch {
+      setAuthError("로그아웃에 실패했습니다. 다시 시도해 주세요.");
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!activeUserId) {
       return;
     }
 
+    setIsDeleteAccountPending(true);
+    setAccountActionError("");
+
     try {
-      await signOut(auth);
-    } catch {
-      setAuthError("로그아웃에 실패했습니다. 다시 시도해 주세요.");
+      if (isFirebaseConfigured) {
+        if (!auth?.currentUser) {
+          throw new Error("로그인 상태를 확인할 수 없습니다.");
+        }
+
+        await deleteUser(auth.currentUser);
+        setCurrentUser(null);
+      } else {
+        const localStore = await loadLocalFamilyStore();
+        const removedMembership = localStore.memberships[activeUserId];
+
+        if (removedMembership) {
+          delete localStore.memberships[activeUserId];
+
+          const hasMemberInFamily = Object.values(localStore.memberships).some(
+            (membership) => membership.familyId === removedMembership.familyId
+          );
+
+          if (!hasMemberInFamily) {
+            localStore.families = localStore.families.filter((family) => family.id !== removedMembership.familyId);
+          }
+
+          await saveLocalFamilyStore(localStore);
+        }
+
+        await clearPersistedLocalAuthUser();
+        setLocalAuthUser(null);
+      }
+
+      setFamilyMembership(null);
+      setFamilyProfile(null);
+      setIssuedFamilyCode("");
+      setSettingsFamilyCode("");
+      setShowSettingsFamilyCode(false);
+      setFamilyError("");
+      setFamilyStep("create");
+      setFamilyReady(true);
+    } catch (error) {
+      const fallback =
+        "탈퇴에 실패했습니다. 다시 로그인 후 시도해 주세요.";
+      const message = error instanceof Error ? error.message : fallback;
+      setAccountActionError(message || fallback);
+    } finally {
+      setIsDeleteAccountPending(false);
     }
   };
 
@@ -817,6 +1469,64 @@ export default function App() {
       setIsDeleteModalVisible(false);
       setDeleteTargetId(null);
       setDeleteTargetType("schedule");
+    });
+  };
+
+  const openSignupConfirmModal = () => {
+    setIsSignupConfirmVisible(true);
+    signupSheetAnim.setValue(0);
+    Animated.timing(signupSheetAnim, {
+      toValue: 1,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true
+    }).start();
+  };
+
+  const closeSignupConfirmModal = (onClosed?: () => void) => {
+    Animated.timing(signupSheetAnim, {
+      toValue: 0,
+      duration: 180,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true
+    }).start(() => {
+      setIsSignupConfirmVisible(false);
+      onClosed?.();
+    });
+  };
+
+  const confirmSignupAction = () => {
+    closeSignupConfirmModal(() => {
+      runAuthAction("signup");
+    });
+  };
+
+  const openWithdrawConfirmModal = () => {
+    setIsWithdrawConfirmVisible(true);
+    withdrawSheetAnim.setValue(0);
+    Animated.timing(withdrawSheetAnim, {
+      toValue: 1,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true
+    }).start();
+  };
+
+  const closeWithdrawConfirmModal = (onClosed?: () => void) => {
+    Animated.timing(withdrawSheetAnim, {
+      toValue: 0,
+      duration: 180,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true
+    }).start(() => {
+      setIsWithdrawConfirmVisible(false);
+      onClosed?.();
+    });
+  };
+
+  const confirmWithdrawAction = () => {
+    closeWithdrawConfirmModal(() => {
+      handleDeleteAccount();
     });
   };
 
@@ -880,23 +1590,25 @@ export default function App() {
     outputRange: [30, 0]
   });
 
-  if (!isFirebaseConfigured && !allowLocalMode) {
-    return (
-      <SafeAreaView style={styles.root}>
-        <StatusBar style={isDarkMode ? "light" : "dark"} />
-        <View style={styles.authContainer}>
-          <AuthBrand themeColors={themeColors} />
-          <View style={styles.authCard}>
-            <Text style={styles.authTitle}>로그인 기능은 준비 중이에요</Text>
-            <Text style={styles.muted}>지금은 로컬 모드로 계속 사용할 수 있어요.</Text>
-            <Pressable style={styles.buttonPrimary} onPress={() => setAllowLocalMode(true)}>
-              <Text style={styles.buttonPrimaryText}>로컬 모드로 계속</Text>
-            </Pressable>
-          </View>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const signupBackdropOpacity = signupSheetAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1]
+  });
+
+  const signupSheetTranslateY = signupSheetAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [30, 0]
+  });
+
+  const withdrawBackdropOpacity = withdrawSheetAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 1]
+  });
+
+  const withdrawSheetTranslateY = withdrawSheetAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [30, 0]
+  });
 
   if (isFirebaseConfigured && !authReady) {
     return (
@@ -909,7 +1621,7 @@ export default function App() {
     );
   }
 
-  if (isFirebaseConfigured && !currentUser) {
+  if (!isSignedIn) {
     return (
       <SafeAreaView style={styles.root}>
         <StatusBar style={isDarkMode ? "light" : "dark"} />
@@ -917,7 +1629,15 @@ export default function App() {
           <AuthBrand themeColors={themeColors} />
           <View style={styles.authCard}>
             <Text style={styles.authTitle}>패밀리톡 계정</Text>
-            <Text style={styles.muted}>가족 계정으로 로그인해 계속 진행하세요.</Text>
+
+            <TextInput
+              value={nickname}
+              onChangeText={setNickname}
+              placeholder="닉네임"
+              autoCapitalize="none"
+              placeholderTextColor={themeColors.textSecondary}
+              style={[styles.input, styles.authInput]}
+            />
 
             <TextInput
               value={email}
@@ -926,23 +1646,29 @@ export default function App() {
               autoCapitalize="none"
               keyboardType="email-address"
               placeholderTextColor={themeColors.textSecondary}
-              style={styles.input}
+              style={[styles.input, styles.authInput]}
             />
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              placeholder="비밀번호"
-              secureTextEntry
-              placeholderTextColor={themeColors.textSecondary}
-              style={styles.input}
-            />
+            <View style={styles.passwordRow}>
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                placeholder="비밀번호"
+                secureTextEntry={!showPassword}
+                placeholderTextColor={themeColors.textSecondary}
+                style={[styles.input, styles.authInput, styles.passwordInput]}
+              />
+              <Pressable style={styles.passwordToggleButton} onPress={() => setShowPassword((prev) => !prev)}>
+                <Text style={styles.passwordToggleText}>{showPassword ? "숨김" : "표시"}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.muted}>보안을 위해 비밀번호는 최소 4자 이상이어야 합니다.</Text>
 
             {authError ? <Text style={styles.authErrorText}>{authError}</Text> : null}
 
             <View style={styles.authActionRow}>
               <Pressable
                 style={[styles.buttonSecondary, styles.authActionButton]}
-                onPress={() => runAuthAction("signup")}
+                onPress={openSignupConfirmModal}
                 disabled={authPending}
               >
                 <Text style={styles.buttonSecondaryText}>{authPending ? "처리 중..." : "회원가입"}</Text>
@@ -955,6 +1681,152 @@ export default function App() {
                 <Text style={styles.buttonPrimaryText}>{authPending ? "처리 중..." : "로그인"}</Text>
               </Pressable>
             </View>
+          </View>
+        </View>
+
+        <Modal
+          visible={isSignupConfirmVisible}
+          transparent
+          animationType="none"
+          onRequestClose={() => closeSignupConfirmModal()}
+        >
+          <View style={styles.modalRoot}>
+            <Animated.View style={[styles.modalBackdrop, { opacity: signupBackdropOpacity }]}>
+              <Pressable style={styles.modalBackdropPressable} onPress={() => closeSignupConfirmModal()} />
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.deleteSheet,
+                {
+                  opacity: signupSheetAnim,
+                  transform: [{ translateY: signupSheetTranslateY }]
+                }
+              ]}
+            >
+              <Text style={styles.deleteSheetTitle}>회원가입하시겠습니까?</Text>
+              <View style={styles.deleteSheetButtons}>
+                <Pressable style={styles.deleteSheetCancelButton} onPress={() => closeSignupConfirmModal()}>
+                  <Text style={styles.deleteSheetCancelText}>취소</Text>
+                </Pressable>
+                <Pressable style={styles.deleteSheetConfirmButton} onPress={confirmSignupAction}>
+                  <Text style={styles.deleteSheetConfirmText}>네</Text>
+                </Pressable>
+              </View>
+            </Animated.View>
+          </View>
+        </Modal>
+      </SafeAreaView>
+    );
+  }
+
+  if (isSignedIn && !familyReady) {
+    return (
+      <SafeAreaView style={styles.root}>
+        <StatusBar style={isDarkMode ? "light" : "dark"} />
+        <View style={styles.authContainer}>
+          <Text style={styles.muted}>가족 방 정보를 확인하는 중...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isSignedIn && !familyMembership) {
+    const joinLocked = Boolean(joinLockedUntil && joinLockedUntil > Date.now());
+
+    return (
+      <SafeAreaView style={styles.root}>
+        <StatusBar style={isDarkMode ? "light" : "dark"} />
+        <View style={styles.authContainer}>
+          <AuthBrand themeColors={themeColors} />
+          <View style={styles.authCard}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.authTitle}>가족 방 시작하기</Text>
+              <Pressable style={styles.buttonSecondary} onPress={handleSignOut}>
+                <Text style={styles.buttonSecondaryText}>뒤로 가기</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.authActionRow}>
+              <Pressable
+                style={[styles.buttonSecondary, styles.authActionButton]}
+                onPress={() => {
+                  setFamilyStep("create");
+                  setFamilyError("");
+                }}
+              >
+                <Text style={styles.buttonSecondaryText}>가족 코드 만들기</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.buttonPrimary, styles.authActionButton]}
+                onPress={() => {
+                  setFamilyStep("join");
+                  setFamilyError("");
+                }}
+              >
+                <Text style={styles.buttonPrimaryText}>코드로 참여하기</Text>
+              </Pressable>
+            </View>
+
+            <TextInput
+              value={displayNameInput}
+              onChangeText={setDisplayNameInput}
+              placeholder="내 이름"
+              placeholderTextColor={themeColors.textSecondary}
+              style={styles.input}
+            />
+
+            {familyStep === "create" ? (
+              <>
+                <TextInput
+                  value={familyNameInput}
+                  onChangeText={setFamilyNameInput}
+                  placeholder="가족 방 이름 입력"
+                  placeholderTextColor={themeColors.textSecondary}
+                  style={styles.input}
+                />
+                <Pressable style={styles.buttonPrimary} onPress={handleCreateFamily} disabled={familyPending}>
+                  <Text style={styles.buttonPrimaryText}>{familyPending ? "생성 중..." : "가족 코드 만들기"}</Text>
+                </Pressable>
+
+                {issuedFamilyCode ? (
+                  <View style={styles.securityCard}>
+                    <Text style={styles.securityTitle}>발급된 가족 코드</Text>
+                    <Text style={styles.securityCode}>{showFamilyCode ? issuedFamilyCode : "•••••-•••••"}</Text>
+                    <Pressable style={styles.buttonSecondary} onPress={() => setShowFamilyCode((prev) => !prev)}>
+                      <Text style={styles.buttonSecondaryText}>{showFamilyCode ? "코드 숨기기" : "코드 보기"}</Text>
+                    </Pressable>
+                    <Text style={styles.securityHint}>코드는 가족에게만 공유하세요. 분실 시 새 가족 방을 만드는 것을 권장합니다.</Text>
+                  </View>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <TextInput
+                  value={joinCodeInput}
+                  onChangeText={(value) => setJoinCodeInput(formatJoinCode(value))}
+                  placeholder="가족 코드 입력 (예: ABC12-3DE45)"
+                  autoCapitalize="characters"
+                  placeholderTextColor={themeColors.textSecondary}
+                  style={styles.input}
+                />
+                <Pressable
+                  style={[styles.buttonPrimary, joinLocked && styles.buttonDisabled]}
+                  onPress={handleJoinFamily}
+                  disabled={familyPending || joinLocked}
+                >
+                  <Text style={styles.buttonPrimaryText}>
+                    {joinLocked
+                      ? `${joinRemainSeconds}초 후 재시도`
+                      : familyPending
+                        ? "참여 중..."
+                        : "가족 방 참여하기"}
+                  </Text>
+                </Pressable>
+              </>
+            )}
+
+            {familyError ? <Text style={styles.authErrorText}>{familyError}</Text> : null}
           </View>
         </View>
       </SafeAreaView>
@@ -972,12 +1844,15 @@ export default function App() {
                 <Text style={styles.headerTitle}>패밀리톡</Text>
                 <Text style={styles.headerDateText}>{todayHeaderText}</Text>
               </View>
-              {isFirebaseConfigured && currentUser?.email ? (
-                <Text style={styles.headerSubTitle}>{currentUser.email}</Text>
+              {familyProfile?.name ? (
+                <Text style={styles.headerSubTitle}>{familyProfile.name} 가족방</Text>
+              ) : null}
+              {activeUserLabel ? (
+                <Text style={styles.headerSubTitle}>{activeUserLabel}</Text>
               ) : null}
             </View>
             <View style={styles.headerActions}>
-              {isFirebaseConfigured ? (
+              {isSignedIn ? (
                 <Pressable style={styles.logoutButton} onPress={handleSignOut}>
                   <Text style={styles.logoutButtonText}>로그아웃</Text>
                 </Pressable>
@@ -1033,6 +1908,14 @@ export default function App() {
           <SettingsScreen
             isDarkMode={isDarkMode}
             onToggleDarkMode={toggleDarkMode}
+            canDeleteAccount={isSignedIn}
+            isDeleteAccountPending={isDeleteAccountPending}
+            accountActionError={accountActionError}
+            onDeleteAccount={openWithdrawConfirmModal}
+            canRevealFamilyCode={Boolean(settingsFamilyCode) && familyMembership?.role === "owner"}
+            isFamilyCodeVisible={showSettingsFamilyCode}
+            familyCode={settingsFamilyCode}
+            onToggleFamilyCode={() => setShowSettingsFamilyCode((prev) => !prev)}
             themeColors={themeColors}
           />
         ) : null}
@@ -1083,6 +1966,40 @@ export default function App() {
             </Animated.View>
           </View>
         </Modal>
+
+        <Modal
+          visible={isWithdrawConfirmVisible}
+          transparent
+          animationType="none"
+          onRequestClose={() => closeWithdrawConfirmModal()}
+        >
+          <View style={styles.modalRoot}>
+            <Animated.View style={[styles.modalBackdrop, { opacity: withdrawBackdropOpacity }]}>
+              <Pressable style={styles.modalBackdropPressable} onPress={() => closeWithdrawConfirmModal()} />
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.deleteSheet,
+                {
+                  opacity: withdrawSheetAnim,
+                  transform: [{ translateY: withdrawSheetTranslateY }]
+                }
+              ]}
+            >
+              <Text style={styles.deleteSheetTitle}>탈퇴하시겠습니까?</Text>
+              <View style={styles.deleteSheetButtons}>
+                <Pressable style={styles.deleteSheetCancelButton} onPress={() => closeWithdrawConfirmModal()}>
+                  <Text style={styles.deleteSheetCancelText}>취소</Text>
+                </Pressable>
+                <Pressable style={styles.deleteSheetConfirmButton} onPress={confirmWithdrawAction}>
+                  <Text style={styles.deleteSheetConfirmText}>네</Text>
+                </Pressable>
+              </View>
+            </Animated.View>
+          </View>
+        </Modal>
+
       </Animated.View>
     </SafeAreaView>
   );
@@ -1225,6 +2142,40 @@ function createStyles(themeColors: ThemeColors) {
   authActionRow: {
     flexDirection: "row",
     gap: 8
+  },
+  authInput: {
+    paddingVertical: 12,
+    maxWidth: 420,
+    fontSize: 16,
+    width: "100%",
+    alignSelf: "center"
+  },
+  passwordRow: {
+    width: "100%",
+    maxWidth: 420,
+    alignSelf: "center",
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center"
+  },
+  passwordInput: {
+    flex: 1,
+    maxWidth: undefined,
+    width: undefined,
+    alignSelf: "auto"
+  },
+  passwordToggleButton: {
+    borderWidth: 1,
+    borderColor: themeColors.border,
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: themeColors.card
+  },
+  passwordToggleText: {
+    color: themeColors.textSecondary,
+    fontSize: 12,
+    fontWeight: "700"
   },
   authActionButton: {
     flex: 1,
@@ -1525,6 +2476,9 @@ function createStyles(themeColors: ThemeColors) {
     paddingVertical: 10,
     borderRadius: 10
   },
+  buttonDisabled: {
+    opacity: 0.5
+  },
   buttonPrimaryText: {
     color: "#fff",
     fontWeight: "700"
@@ -1540,6 +2494,41 @@ function createStyles(themeColors: ThemeColors) {
   buttonSecondaryText: {
     color: themeColors.accent,
     fontWeight: "700"
+  },
+  buttonDanger: {
+    backgroundColor: "#d84a4a",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: "center"
+  },
+  buttonDangerText: {
+    color: "#fff",
+    fontWeight: "700"
+  },
+  securityCard: {
+    borderWidth: 1,
+    borderColor: themeColors.border,
+    borderRadius: 12,
+    padding: 12,
+    gap: 8,
+    backgroundColor: themeColors.card
+  },
+  securityTitle: {
+    color: themeColors.textPrimary,
+    fontSize: 14,
+    fontWeight: "700"
+  },
+  securityCode: {
+    color: themeColors.textPrimary,
+    fontSize: 24,
+    fontWeight: "800",
+    letterSpacing: 1.2
+  },
+  securityHint: {
+    color: themeColors.textSecondary,
+    fontSize: 12,
+    lineHeight: 18
   },
   voteItem: {
     padding: 10,
