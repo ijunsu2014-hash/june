@@ -179,11 +179,26 @@ export function useFamilyTalkStore() {
     );
   };
 
-  const addSchedule = (title: string, isFamilyEvent: boolean) => {
+  const addSchedule = (title: string, date: string, time: string, isFamilyEvent: boolean) => {
+    let dateTime = new Date().toISOString();
+    
+    // Parse date string (format: "YYYY-MM-DD") and create datetime
+    if (date) {
+      const dateParts = date.split('-');
+      if (dateParts.length === 3) {
+        const year = parseInt(dateParts[0], 10);
+        const month = parseInt(dateParts[1], 10) - 1;
+        const day = parseInt(dateParts[2], 10);
+        const d = new Date(year, month, day, 0, 0, 0);
+        dateTime = d.toISOString();
+      }
+    }
+    
     const newItem: ScheduleItem = {
       id: `s-${Date.now()}`,
       title,
-      dateTime: new Date().toISOString(),
+      dateTime,
+      time: time.trim() || undefined,
       isFamilyEvent,
       ownerName: isFamilyEvent ? "가족" : "나"
     };

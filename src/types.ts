@@ -13,6 +13,7 @@ export interface ScheduleItem {
   id: string;
   title: string;
   dateTime: string;
+  time?: string; // HH:MM format
   isFamilyEvent: boolean;
   ownerName: string;
 }

@@ -118,6 +118,12 @@ const formatTodayText = (date: Date) => {
   return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} (${weekLabel})`;
 };
 
+// Web Notification setup - disabled for now
+const scheduleNotification = async (schedule: ScheduleItem) => {
+  // Notification feature temporarily disabled
+  return;
+};
+
 function SectionCard({
   title,
   children,
@@ -245,7 +251,7 @@ function HomeScreen({
     <>
       <ScrollView contentContainerStyle={styles.content}>
         <SectionCard
-          title="오늘 일정"
+          title="오늘의 일정"
           headerRight={
             <Pressable
               style={styles.calendarOpenButton}
@@ -438,7 +444,7 @@ function HomeScreen({
                       {cell.holidayName ? <Text style={styles.calendarHolidayName}>{cell.holidayName}</Text> : null}
                       {cell.items.slice(0, 2).map((item) => (
                         <Text key={item.id} style={styles.calendarEventText} numberOfLines={1}>
-                          {item.title}
+                          {item.time ? `${item.time} ${item.title}` : item.title}
                         </Text>
                       ))}
                       {cell.items.length > 2 ? <Text style={styles.calendarEventMore}>+{cell.items.length - 2}</Text> : null}
@@ -468,11 +474,19 @@ function ScheduleScreen({
 }: {
   schedules: ScheduleItem[];
   scheduleCount: number;
-  onAdd: (title: string, isFamily: boolean) => void;
+  onAdd: (title: string, date: string, time: string, isFamily: boolean) => void;
   onRequestDelete: (scheduleId: string) => void;
   themeColors: ThemeColors;
 }) {
   const [title, setTitle] = useState("");
+  const [date, setDate] = useState(() => {
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, '0');
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  });
+  const [time, setTime] = useState("");
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
@@ -486,6 +500,20 @@ function ScheduleScreen({
           placeholderTextColor={themeColors.textSecondary}
           style={styles.input}
         />
+        <TextInput
+          value={date}
+          onChangeText={setDate}
+          placeholder="날짜 (예: 2026-07-18)"
+          placeholderTextColor={themeColors.textSecondary}
+          style={styles.input}
+        />
+        <TextInput
+          value={time}
+          onChangeText={setTime}
+          placeholder="시간 (예: 14:30)"
+          placeholderTextColor={themeColors.textSecondary}
+          style={styles.input}
+        />
         <View style={styles.rowGap}>
           <Pressable
             style={styles.buttonPrimary}
@@ -493,8 +521,14 @@ function ScheduleScreen({
               if (!title.trim()) {
                 return;
               }
-              onAdd(title.trim(), true);
+              onAdd(title.trim(), date.trim(), time.trim(), true);
               setTitle("");
+              const today = new Date();
+              const year = today.getFullYear();
+              const month = String(today.getMonth() + 1).padStart(2, '0');
+              const day = String(today.getDate()).padStart(2, '0');
+              setDate(`${year}-${month}-${day}`);
+              setTime("");
             }}
           >
             <Text style={styles.buttonPrimaryText}>일정 추가</Text>
@@ -510,7 +544,9 @@ function ScheduleScreen({
             <View key={item.id} style={styles.scheduleItem}>
               <View style={styles.scheduleTextWrap}>
                 <Text style={styles.mainText}>{item.title}</Text>
-                <Text style={styles.scheduleTypeText}>{item.isFamilyEvent ? "가족 일정" : "개인 일정"}</Text>
+                <Text style={styles.scheduleTypeText}>
+                  {item.time ? `${item.time} · ` : ""}{item.isFamilyEvent ? "가족 일정" : "개인 일정"}
+                </Text>
               </View>
               <Pressable onPress={() => onRequestDelete(item.id)} style={styles.deleteButton}>
                 <Text style={styles.deleteButtonText}>삭제</Text>
@@ -1446,6 +1482,10 @@ export default function App() {
     }
   };
 
+  const addScheduleWithNotification = (title: string, date: string, time: string, isFamily: boolean) => {
+    addSchedule(title, date, time, isFamily);
+  };
+
   const openDeleteModal = (targetId: string, targetType: DeleteTargetType = "schedule") => {
     setDeleteTargetId(targetId);
     setDeleteTargetType(targetType);
@@ -1881,7 +1921,7 @@ export default function App() {
           <ScheduleScreen
             schedules={schedules}
             scheduleCount={schedules.length}
-            onAdd={addSchedule}
+            onAdd={addScheduleWithNotification}
             onRequestDelete={openDeleteModal}
             themeColors={themeColors}
           />
