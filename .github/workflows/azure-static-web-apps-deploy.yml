@@ -25,12 +25,6 @@ jobs:
           npm run build
         working-directory: ./familytalk-app
         
-      - name: Upload artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: build-output
-          path: ./familytalk-app/dist
-          
       - name: Build And Deploy
         id: builddeploy
         uses: Azure/static-web-apps-deploy@v1
