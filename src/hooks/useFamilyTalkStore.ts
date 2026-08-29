@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useEffect, useMemo, useState } from "react";
+import { Firestore } from "firebase/firestore";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { mockMeal, mockMembers, mockSchedules, mockVotes, mockWishedMenus } from "../data/mockData";
+import { saveFamilyData, subscribeFamilyData } from "../services/familyData";
 import { DailyMeal, WishedMenu, FamilyMember, MoodType, ScheduleItem, Vote } from "../types";
 
 const STORAGE_KEY = "familytalk-store-v1";
@@ -24,16 +26,40 @@ const isLegacySampleVote = (vote: Vote) => {
   );
 };
 
-export function useFamilyTalkStore() {
+// When familyDb + familyId are provided, all shared data is synced in real time
+// through a single Firestore document so every family member sees the same state.
+// Otherwise the hook falls back to per-device AsyncStorage (demo/offline mode).
+// myUid/myDisplayName identify the signed-in user so they're auto-registered as a
+// family member and can only ever change their own mood.
+export function useFamilyTalkStore(
+  familyDb: Firestore | null = null,
+  familyId: string | null = null,
+  myUid: string | null = null,
+  myDisplayName: string | null = null
+) {
+  const isSyncMode = Boolean(familyDb && familyId);
   const [members, setMembers] = useState<FamilyMember[]>(mockMembers);
   const [schedules, setSchedules] = useState<ScheduleItem[]>(mockSchedules);
   const [meal, setMeal] = useState<DailyMeal>(mockMeal);
   const [wishedMenus, setWishedMenus] = useState<WishedMenu[]>(mockWishedMenus);
   const [votes, setVotes] = useState<Vote[]>(mockVotes);
   const [isHydrated, setIsHydrated] = useState(false);
+  const isApplyingRemoteUpdate = useRef(false);
+  // Guards against a stale-render race: when switching between local/sync mode,
+  // `isHydrated` from the previous mode can still read `true` in the same effect
+  // flush before the new mode's data has loaded. Only a push whose hydration
+  // "generation" matches the latest one is allowed to write, so we never persist
+  // stale/default data over real data from another device.
+  const hydrationGenerationRef = useRef(0);
+  const readyGenerationRef = useRef(-1);
 
   useEffect(() => {
+    if (isSyncMode) {
+      return;
+    }
+
     let mounted = true;
+    const myGeneration = ++hydrationGenerationRef.current;
 
     const hydrateStore = async () => {
       try {
@@ -67,6 +93,7 @@ export function useFamilyTalkStore() {
         // Ignore corrupted local data and continue with defaults.
       } finally {
         if (mounted) {
+          readyGenerationRef.current = myGeneration;
           setIsHydrated(true);
         }
       }
@@ -77,10 +104,89 @@ export function useFamilyTalkStore() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [isSyncMode]);
+
+  useEffect(() => {
+    if (!isSyncMode || !familyDb || !familyId) {
+      return;
+    }
+
+    setIsHydrated(false);
+    let mounted = true;
+    let hasSeeded = false;
+    const myGeneration = ++hydrationGenerationRef.current;
+
+    const unsubscribe = subscribeFamilyData(
+      familyDb,
+      familyId,
+      (data) => {
+        if (!mounted) {
+          return;
+        }
+
+        if (!data) {
+          // No shared state yet for this family: seed it once with the starter data
+          // so every member (whoever opens the app first) converges on the same doc.
+          if (!hasSeeded) {
+            hasSeeded = true;
+            saveFamilyData(familyDb, familyId, {
+              members: mockMembers,
+              schedules: mockSchedules,
+              meal: mockMeal,
+              wishedMenus: mockWishedMenus,
+              votes: mockVotes
+            }).catch(() => {
+              // Ignore seed failure; next local mutation will retry the write.
+            });
+          }
+          readyGenerationRef.current = myGeneration;
+          setIsHydrated(true);
+          return;
+        }
+
+        isApplyingRemoteUpdate.current = true;
+        setMembers(data.members ?? []);
+        setSchedules(data.schedules ?? []);
+        setMeal(data.meal ?? mockMeal);
+        setWishedMenus(data.wishedMenus ?? []);
+        setVotes(data.votes ?? []);
+        readyGenerationRef.current = myGeneration;
+        setIsHydrated(true);
+      },
+      () => {
+        if (mounted) {
+          readyGenerationRef.current = myGeneration;
+          setIsHydrated(true);
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, [isSyncMode, familyDb, familyId]);
 
   useEffect(() => {
     if (!isHydrated) {
+      return;
+    }
+
+    if (hydrationGenerationRef.current !== readyGenerationRef.current) {
+      // A newer hydration cycle (mode/family switch) has started but hasn't
+      // finished yet; this render's data is stale, so skip persisting it.
+      return;
+    }
+
+    if (isApplyingRemoteUpdate.current) {
+      isApplyingRemoteUpdate.current = false;
+      return;
+    }
+
+    if (isSyncMode && familyDb && familyId) {
+      saveFamilyData(familyDb, familyId, { members, schedules, meal, wishedMenus, votes }).catch(() => {
+        // Ignore write failures to avoid blocking UI interaction; next change retries.
+      });
       return;
     }
 
@@ -95,7 +201,30 @@ export function useFamilyTalkStore() {
     AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persistedState)).catch(() => {
       // Ignore storage failures to avoid blocking UI interaction.
     });
-  }, [isHydrated, members, schedules, meal, wishedMenus, votes]);
+  }, [isHydrated, isSyncMode, familyDb, familyId, members, schedules, meal, wishedMenus, votes]);
+
+  useEffect(() => {
+    if (!isHydrated || !myUid) {
+      return;
+    }
+
+    setMembers((prev) => {
+      const existing = prev.find((member) => member.id === myUid);
+
+      if (existing) {
+        if (myDisplayName && existing.name !== myDisplayName) {
+          return prev.map((member) => (member.id === myUid ? { ...member, name: myDisplayName } : member));
+        }
+        return prev;
+      }
+
+      if (!myDisplayName) {
+        return prev;
+      }
+
+      return [...prev, { id: myUid, uid: myUid, name: myDisplayName, isOnline: true, mood: "normal" }];
+    });
+  }, [isHydrated, myUid, myDisplayName]);
 
   const todaySchedules = useMemo(() => {
     const today = new Date();
@@ -111,8 +240,12 @@ export function useFamilyTalkStore() {
       .sort((a, b) => new Date(a.dateTime).getTime() - new Date(b.dateTime).getTime());
   }, [schedules]);
 
-  const setMemberMood = (memberId: string, mood: MoodType) => {
-    setMembers((prev) => prev.map((m) => (m.id === memberId ? { ...m, mood } : m)));
+  const setMyMood = (mood: MoodType) => {
+    if (!myUid) {
+      return;
+    }
+
+    setMembers((prev) => prev.map((m) => (m.id === myUid ? { ...m, mood } : m)));
   };
 
   const updateMealStatus = (status: DailyMeal["status"]) => {
@@ -237,26 +370,6 @@ export function useFamilyTalkStore() {
     setVotes((prev) => prev.filter((vote) => vote.id !== voteId));
   };
 
-  const addMember = (name: string, role: string) => {
-    if (!name.trim() || !role.trim()) {
-      return;
-    }
-
-    const member: FamilyMember = {
-      id: `m-${Date.now()}`,
-      name: name.trim(),
-      role: role.trim(),
-      isOnline: true,
-      mood: "normal"
-    };
-
-    setMembers((prev) => [...prev, member]);
-  };
-
-  const deleteMember = (memberId: string) => {
-    setMembers((prev) => prev.filter((member) => member.id !== memberId));
-  };
-
   return {
     members,
     schedules,
@@ -264,7 +377,7 @@ export function useFamilyTalkStore() {
     meal,
     wishedMenus,
     votes,
-    setMemberMood,
+    setMyMood,
     updateMealStatus,
     updateMealInfo,
     deleteMeal,
@@ -274,8 +387,6 @@ export function useFamilyTalkStore() {
     addSchedule,
     deleteSchedule,
     addVote,
-    deleteVote,
-    addMember,
-    deleteMember
+    deleteVote
   };
 }

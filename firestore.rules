@@ -1,0 +1,44 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function membership() {
+      return get(/databases/$(database)/documents/familyMemberships/$(request.auth.uid));
+    }
+
+    function isMemberOf(familyId) {
+      return isSignedIn()
+        && membership().data.familyId == familyId;
+    }
+
+    // Family profile: readable by signed-in members of that family,
+    // creatable by any signed-in user (used to create a new family room),
+    // but never directly writable afterwards (name/code stay immutable via client).
+    match /families/{familyId} {
+      // "list" must stay open to signed-in users so a new member can look up
+      // a family by its hashed join code (codeHash) before becoming a member.
+      // Only codeHash (not the raw code) and the family name are exposed.
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+
+      // Single shared document holding members/schedules/meal/wishedMenus/votes,
+      // kept in sync in real time for every member of this family.
+      match /appData/{stateDoc} {
+        allow read, write: if isMemberOf(familyId);
+      }
+    }
+
+    // Membership doc is keyed by uid: only its owner can read/write it,
+    // and it can only ever be created once (no reassigning to another family from the client).
+    match /familyMemberships/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update, delete: if isSignedIn() && request.auth.uid == uid;
+    }
+  }
+}

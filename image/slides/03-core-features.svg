@@ -1,0 +1,50 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="1920" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1020"/>
+      <stop offset="1" stop-color="#172554"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg3)"/>
+
+  <text x="140" y="150" fill="#F8FAFC" font-family="Segoe UI, Arial, sans-serif" font-size="70" font-weight="700">Core Features of FamilyTalk</text>
+
+  <g>
+    <rect x="140" y="220" width="390" height="700" rx="28" fill="#111827" stroke="#334155"/>
+    <circle cx="335" cy="340" r="66" fill="#38BDF8" opacity="0.25"/>
+    <rect x="287" y="292" width="96" height="96" rx="20" fill="#0EA5E9"/>
+    <text x="220" y="500" fill="#E2E8F0" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">Schedule</text>
+    <text x="190" y="560" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="30">Track family and</text>
+    <text x="190" y="600" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="30">personal plans</text>
+  </g>
+
+  <g>
+    <rect x="570" y="220" width="390" height="700" rx="28" fill="#111827" stroke="#334155"/>
+    <circle cx="765" cy="340" r="66" fill="#34D399" opacity="0.25"/>
+    <rect x="717" y="292" width="96" height="96" rx="20" fill="#10B981"/>
+    <text x="690" y="500" fill="#E2E8F0" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">Meals</text>
+    <text x="625" y="560" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="30">Update daily menu</text>
+    <text x="625" y="600" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="30">and dining status</text>
+  </g>
+
+  <g>
+    <rect x="1000" y="220" width="390" height="700" rx="28" fill="#111827" stroke="#334155"/>
+    <circle cx="1195" cy="340" r="66" fill="#FBBF24" opacity="0.25"/>
+    <rect x="1147" y="292" width="96" height="96" rx="20" fill="#F59E0B"/>
+    <text x="1120" y="500" fill="#E2E8F0" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">Mood</text>
+    <text x="1060" y="560" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="30">Share condition</text>
+    <text x="1060" y="600" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="30">for better empathy</text>
+  </g>
+
+  <g>
+    <rect x="1430" y="220" width="390" height="700" rx="28" fill="#111827" stroke="#334155"/>
+    <circle cx="1625" cy="340" r="66" fill="#A78BFA" opacity="0.25"/>
+    <rect x="1577" y="292" width="96" height="96" rx="20" fill="#8B5CF6"/>
+    <text x="1560" y="500" fill="#E2E8F0" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">Vote</text>
+    <text x="1490" y="560" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="30">Decide plans</text>
+    <text x="1490" y="600" fill="#94A3B8" font-family="Segoe UI, Arial, sans-serif" font-size="30">in one tap</text>
+  </g>
+
+  <text x="140" y="1010" fill="#93C5FD" font-family="Segoe UI, Arial, sans-serif" font-size="34">A single app for daily family coordination</text>
+</svg>

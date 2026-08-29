@@ -1,6 +1,7 @@
 import * as CryptoJS from "crypto-js";
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -21,6 +22,7 @@ export type FamilyMembership = {
 export type FamilyProfile = {
   id: string;
   name: string;
+  codeCipher?: string;
 };
 
 const FAMILY_CODE_CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -40,6 +42,18 @@ const normalizeFamilyCode = (value: string) => value.trim().toUpperCase().replac
 
 const hashFamilyCode = (normalizedCode: string) => {
   return CryptoJS.SHA256(`${normalizedCode}|${FAMILY_CODE_PEPPER}`).toString(CryptoJS.enc.Hex);
+};
+
+// Lets the family owner re-reveal their join code later (e.g. from Settings)
+// without ever storing the plaintext code server-side for other members to read.
+const getOwnerCodeCipherKey = (uid: string) => `familytalk-owner-code-v1|${uid}`;
+
+const encryptFamilyCodeForOwner = (code: string, uid: string) =>
+  CryptoJS.AES.encrypt(code, getOwnerCodeCipherKey(uid)).toString();
+
+export const decryptFamilyCodeForOwner = (cipher: string, uid: string) => {
+  const bytes = CryptoJS.AES.decrypt(cipher, getOwnerCodeCipherKey(uid));
+  return bytes.toString(CryptoJS.enc.Utf8);
 };
 
 export const generateFamilyCode = (length = 10) => {
@@ -87,6 +101,12 @@ export const getUserMembership = async (db: Firestore, uid: string): Promise<Fam
   };
 };
 
+// Must run *before* deleting the Auth user: once signed out, the security
+// rules no longer allow anyone to remove this membership doc, orphaning it.
+export const leaveFamily = async (db: Firestore, uid: string) => {
+  await deleteDoc(doc(db, "familyMemberships", uid));
+};
+
 export const getFamilyProfile = async (db: Firestore, familyId: string): Promise<FamilyProfile | null> => {
   const familyRef = doc(db, "families", familyId);
   const familySnap = await getDoc(familyRef);
@@ -95,11 +115,12 @@ export const getFamilyProfile = async (db: Firestore, familyId: string): Promise
     return null;
   }
 
-  const data = familySnap.data() as { name: string };
+  const data = familySnap.data() as { name: string; codeCipher?: string };
 
   return {
     id: familySnap.id,
-    name: data.name
+    name: data.name,
+    codeCipher: data.codeCipher
   };
 };
 
@@ -141,6 +162,7 @@ export const createFamilyAndJoin = async (
 
   const familyRef = doc(collection(db, "families"));
   const membershipRef = doc(db, "familyMemberships", uid);
+  const codeCipher = encryptFamilyCodeForOwner(generatedCode, uid);
 
   await runTransaction(db, async (tx) => {
     const existingMembership = await tx.get(membershipRef);
@@ -152,6 +174,7 @@ export const createFamilyAndJoin = async (
     tx.set(familyRef, {
       name: safeFamilyName,
       codeHash,
+      codeCipher,
       createdByUid: uid,
       createdAt: serverTimestamp(),
       codePolicy: "sha256-v1"
@@ -174,7 +197,8 @@ export const createFamilyAndJoin = async (
     },
     profile: {
       id: familyRef.id,
-      name: safeFamilyName
+      name: safeFamilyName,
+      codeCipher
     }
   };
 };

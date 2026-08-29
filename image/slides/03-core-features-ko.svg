@@ -1,0 +1,50 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="1920" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1020"/>
+      <stop offset="1" stop-color="#172554"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg3)"/>
+
+  <text x="140" y="150" fill="#F8FAFC" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="70" font-weight="700">패밀리톡 핵심 기능</text>
+
+  <g>
+    <rect x="140" y="220" width="390" height="700" rx="28" fill="#111827" stroke="#334155"/>
+    <circle cx="335" cy="340" r="66" fill="#38BDF8" opacity="0.25"/>
+    <rect x="287" y="292" width="96" height="96" rx="20" fill="#0EA5E9"/>
+    <text x="238" y="500" fill="#E2E8F0" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">일정 관리</text>
+    <text x="188" y="560" fill="#94A3B8" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="30">가족/개인 일정을</text>
+    <text x="188" y="600" fill="#94A3B8" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="30">한눈에 확인</text>
+  </g>
+
+  <g>
+    <rect x="570" y="220" width="390" height="700" rx="28" fill="#111827" stroke="#334155"/>
+    <circle cx="765" cy="340" r="66" fill="#34D399" opacity="0.25"/>
+    <rect x="717" y="292" width="96" height="96" rx="20" fill="#10B981"/>
+    <text x="702" y="500" fill="#E2E8F0" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">오늘 식단</text>
+    <text x="620" y="560" fill="#94A3B8" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="30">집밥/외식 상태와</text>
+    <text x="620" y="600" fill="#94A3B8" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="30">식단 정보 공유</text>
+  </g>
+
+  <g>
+    <rect x="1000" y="220" width="390" height="700" rx="28" fill="#111827" stroke="#334155"/>
+    <circle cx="1195" cy="340" r="66" fill="#FBBF24" opacity="0.25"/>
+    <rect x="1147" y="292" width="96" height="96" rx="20" fill="#F59E0B"/>
+    <text x="1104" y="500" fill="#E2E8F0" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">감정 공유</text>
+    <text x="1054" y="560" fill="#94A3B8" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="30">컨디션을 미리 알아</text>
+    <text x="1054" y="600" fill="#94A3B8" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="30">배려 소통 강화</text>
+  </g>
+
+  <g>
+    <rect x="1430" y="220" width="390" height="700" rx="28" fill="#111827" stroke="#334155"/>
+    <circle cx="1625" cy="340" r="66" fill="#A78BFA" opacity="0.25"/>
+    <rect x="1577" y="292" width="96" height="96" rx="20" fill="#8B5CF6"/>
+    <text x="1544" y="500" fill="#E2E8F0" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="44" font-weight="700">가족 투표</text>
+    <text x="1490" y="560" fill="#94A3B8" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="30">주말 계획 같은 결정</text>
+    <text x="1490" y="600" fill="#94A3B8" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="30">빠르게 완료</text>
+  </g>
+
+  <text x="140" y="1010" fill="#93C5FD" font-family="Malgun Gothic, Apple SD Gothic Neo, Segoe UI, Arial, sans-serif" font-size="34">가족의 하루를 연결하는 통합 대시보드</text>
+</svg>

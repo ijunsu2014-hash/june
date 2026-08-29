@@ -1,0 +1,46 @@
+<svg width="1920" height="1080" viewBox="0 0 1920 1080" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1920" y2="1080" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC"/>
+      <stop offset="1" stop-color="#E2E8F0"/>
+    </linearGradient>
+    <linearGradient id="line" x1="420" y1="540" x2="1500" y2="540" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FB7185"/>
+      <stop offset="1" stop-color="#14B8A6"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1920" height="1080" fill="url(#bg2)"/>
+
+  <text x="180" y="160" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="68" font-weight="700">From Communication Friction to Shared Clarity</text>
+
+  <rect x="160" y="230" width="720" height="720" rx="36" fill="#FFF1F2" stroke="#FDA4AF" stroke-width="2"/>
+  <text x="220" y="320" fill="#9F1239" font-family="Segoe UI, Arial, sans-serif" font-size="52" font-weight="700">Before</text>
+
+  <rect x="220" y="380" width="600" height="92" rx="18" fill="#FFFFFF"/>
+  <text x="250" y="438" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="36">Scattered schedules</text>
+
+  <rect x="220" y="500" width="600" height="92" rx="18" fill="#FFFFFF"/>
+  <text x="250" y="558" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="36">Repeated meal chats</text>
+
+  <rect x="220" y="620" width="600" height="92" rx="18" fill="#FFFFFF"/>
+  <text x="250" y="678" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="36">Unknown family mood</text>
+
+  <rect x="220" y="740" width="600" height="92" rx="18" fill="#FFFFFF"/>
+  <text x="250" y="798" fill="#334155" font-family="Segoe UI, Arial, sans-serif" font-size="36">Long decision threads</text>
+
+  <rect x="1040" y="230" width="720" height="720" rx="36" fill="#ECFEFF" stroke="#67E8F9" stroke-width="2"/>
+  <text x="1100" y="320" fill="#0F766E" font-family="Segoe UI, Arial, sans-serif" font-size="52" font-weight="700">After</text>
+
+  <rect x="1100" y="380" width="600" height="108" rx="18" fill="#FFFFFF"/>
+  <text x="1130" y="445" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34">1-minute home check</text>
+
+  <rect x="1100" y="520" width="600" height="108" rx="18" fill="#FFFFFF"/>
+  <text x="1130" y="585" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34">Unified family information</text>
+
+  <rect x="1100" y="660" width="600" height="108" rx="18" fill="#FFFFFF"/>
+  <text x="1130" y="725" fill="#0F172A" font-family="Segoe UI, Arial, sans-serif" font-size="34">Faster daily decisions</text>
+
+  <path d="M900 540H1020" stroke="url(#line)" stroke-width="14" stroke-linecap="round"/>
+  <path d="M995 500L1045 540L995 580" stroke="#14B8A6" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

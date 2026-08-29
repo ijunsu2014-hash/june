@@ -28,10 +28,12 @@ import {
   FamilyMembership,
   FamilyProfile,
   createFamilyAndJoin,
+  decryptFamilyCodeForOwner,
   generateFamilyCode,
   getFamilyProfile,
   getUserMembership,
-  joinFamilyWithCode
+  joinFamilyWithCode,
+  leaveFamily
 } from "./src/services/familyRoom";
 import { colors, darkColors, mealMeta, moodMeta } from "./src/theme";
 import { DailyMeal, FamilyMember, ScheduleItem, Vote, WishedMenu } from "./src/types";
@@ -47,7 +49,7 @@ const tabs: { key: TabKey; label: string }[] = [
 ];
 
 type ThemeColors = typeof colors;
-type DeleteTargetType = "schedule" | "member" | "vote" | "meal" | "wishedMenu";
+type DeleteTargetType = "schedule" | "vote" | "meal" | "wishedMenu";
 const THEME_STORAGE_KEY = "familytalk-theme-v1";
 const LOCAL_AUTH_STORAGE_KEY = "familytalk-local-auth-v1";
 const LOCAL_FAMILY_STORE_KEY = "familytalk-local-family-store-v1";
@@ -709,73 +711,50 @@ function SettingsScreen({
 
 function FamilyScreen({
   members,
+  myUid,
   onMood,
-  onAddMember,
-  onRequestDeleteMember,
   themeColors
 }: {
   members: FamilyMember[];
-  onMood: (memberId: string, mood: FamilyMember["mood"]) => void;
-  onAddMember: (name: string, role: string) => void;
-  onRequestDeleteMember: (memberId: string) => void;
+  myUid: string | null;
+  onMood: (mood: FamilyMember["mood"]) => void;
   themeColors: ThemeColors;
 }) {
   const moods = useMemo(() => Object.keys(moodMeta) as FamilyMember["mood"][], []);
-  const [name, setName] = useState("");
   const styles = useMemo(() => createStyles(themeColors), [themeColors]);
 
   return (
     <ScrollView contentContainerStyle={styles.content}>
-      <SectionCard title="가족 구성원 추가" themeColors={themeColors}>
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          placeholder="이름 입력"
-          placeholderTextColor={themeColors.textSecondary}
-          style={styles.input}
-        />
-        <Pressable
-          style={styles.buttonPrimary}
-          onPress={() => {
-            if (!name.trim()) {
-              return;
-            }
-            onAddMember(name.trim(), "가족");
-            setName("");
-          }}
-        >
-          <Text style={styles.buttonPrimaryText}>직접 가족 추가</Text>
-        </Pressable>
-      </SectionCard>
-
       {members.length === 0 ? (
         <SectionCard title="가족 구성원" themeColors={themeColors}>
           <Text style={styles.muted}>아직 등록된 가족 구성원이 없습니다.</Text>
         </SectionCard>
       ) : (
-        members.map((member) => (
-          <SectionCard key={member.id} title={member.name} themeColors={themeColors}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.muted}>온라인: {member.isOnline ? "접속 중" : "오프라인"}</Text>
-              <Pressable style={styles.deleteButton} onPress={() => onRequestDeleteMember(member.id)}>
-                <Text style={styles.deleteButtonText}>삭제</Text>
-              </Pressable>
-            </View>
-            <View style={styles.chipRow}>
-              {moods.map((mood) => (
-                <Pressable
-                  key={mood}
-                  onPress={() => onMood(member.id, mood)}
-                  style={[styles.chip, member.mood === mood && styles.chipSelected]}
-                >
-                  <Text style={styles.chipLabel}>
-                    {moodMeta[mood].emoji} {moodMeta[mood].label}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </SectionCard>
-        ))
+        members.map((member) => {
+          const isMe = member.id === myUid;
+
+          return (
+            <SectionCard key={member.id} title={isMe ? `${member.name} (나)` : member.name} themeColors={themeColors}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.muted}>온라인: {member.isOnline ? "접속 중" : "오프라인"}</Text>
+              </View>
+              <View style={styles.chipRow}>
+                {moods.map((mood) => (
+                  <Pressable
+                    key={mood}
+                    onPress={() => isMe && onMood(mood)}
+                    disabled={!isMe}
+                    style={[styles.chip, member.mood === mood && styles.chipSelected, !isMe && styles.chipDisabled]}
+                  >
+                    <Text style={styles.chipLabel}>
+                      {moodMeta[mood].emoji} {moodMeta[mood].label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </SectionCard>
+          );
+        })
       )}
     </ScrollView>
   );
@@ -833,7 +812,7 @@ export default function App() {
     meal,
     wishedMenus,
     votes,
-    setMemberMood,
+    setMyMood,
     updateMealStatus,
     updateMealInfo,
     deleteMeal,
@@ -843,10 +822,13 @@ export default function App() {
     addSchedule,
     deleteSchedule,
     addVote,
-    deleteVote,
-    addMember,
-    deleteMember
-  } = useFamilyTalkStore();
+    deleteVote
+  } = useFamilyTalkStore(
+    isFirebaseConfigured ? db : null,
+    familyMembership?.familyId ?? null,
+    isFirebaseConfigured ? currentUser?.uid ?? null : localAuthUser?.uid ?? null,
+    familyMembership?.displayName ?? null
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -956,6 +938,8 @@ export default function App() {
             setFamilyMembership(null);
             setFamilyProfile(null);
             setIssuedFamilyCode("");
+            setSettingsFamilyCode("");
+            setShowSettingsFamilyCode(false);
             return;
           }
 
@@ -968,6 +952,8 @@ export default function App() {
           if (!membership) {
             setFamilyMembership(null);
             setFamilyProfile(null);
+            setSettingsFamilyCode("");
+            setShowSettingsFamilyCode(false);
             return;
           }
 
@@ -979,6 +965,14 @@ export default function App() {
           }
 
           setFamilyProfile(profile);
+
+          if (membership.role === "owner" && profile?.codeCipher) {
+            setSettingsFamilyCode(decryptFamilyCodeForOwner(profile.codeCipher, currentUser.uid));
+          } else {
+            setSettingsFamilyCode("");
+            setShowSettingsFamilyCode(false);
+          }
+
           return;
         }
 
@@ -1078,6 +1072,31 @@ export default function App() {
     return fallback;
   };
 
+  // Firebase Authentication rejects passwords under 6 characters and duplicate
+  // emails, so surface those specific cases with a clear Korean message.
+  const resolveAuthErrorMessage = (error: unknown) => {
+    const code = (error as { code?: string } | null)?.code;
+
+    switch (code) {
+      case "auth/weak-password":
+        return "비밀번호는 최소 6자 이상이어야 합니다.";
+      case "auth/email-already-in-use":
+        return "이미 가입된 이메일입니다. 다른 이메일을 사용하거나 로그인을 이용해 주세요.";
+      case "auth/invalid-email":
+        return "이메일 형식이 올바르지 않습니다.";
+      case "auth/user-not-found":
+      case "auth/wrong-password":
+      case "auth/invalid-credential":
+        return "이메일 또는 비밀번호가 올바르지 않습니다.";
+      case "auth/too-many-requests":
+        return "시도 횟수가 많아 잠시 후 다시 시도해 주세요.";
+      case "auth/network-request-failed":
+        return "네트워크 오류가 발생했습니다. 인터넷 연결을 확인해 주세요.";
+      default:
+        return resolveErrorMessage(error, "인증 중 오류가 발생했습니다.");
+    }
+  };
+
   const isSignedIn = isFirebaseConfigured ? Boolean(currentUser) : Boolean(localAuthUser);
   const activeUserId = isFirebaseConfigured ? currentUser?.uid ?? null : localAuthUser?.uid ?? null;
   const activeUserLabel = isFirebaseConfigured
@@ -1161,6 +1180,8 @@ export default function App() {
         setFamilyMembership(result.membership);
         setFamilyProfile(result.profile);
         setIssuedFamilyCode(result.familyCode);
+        setSettingsFamilyCode(result.familyCode);
+        setShowSettingsFamilyCode(false);
       } else {
         const safeFamilyName = familyNameInput.trim();
         const safeDisplayName = displayNameInput.trim();
@@ -1306,8 +1327,8 @@ export default function App() {
       return;
     }
 
-    if (password.trim().length < 4) {
-      setAuthError("비밀번호는 최소 4자 이상이어야 합니다.");
+    if (password.trim().length < 6) {
+      setAuthError("비밀번호는 최소 6자 이상이어야 합니다.");
       return;
     }
 
@@ -1392,8 +1413,7 @@ export default function App() {
         }
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "인증 중 오류가 발생했습니다.";
-      setAuthError(message);
+      setAuthError(resolveAuthErrorMessage(error));
     } finally {
       setAuthPending(false);
     }
@@ -1421,6 +1441,9 @@ export default function App() {
       setFamilyStep("create");
       setFamilyReady(true);
       setAccountActionError("");
+      setDisplayNameInput("");
+      setFamilyNameInput("");
+      setJoinCodeInput("");
     } catch {
       setAuthError("로그아웃에 실패했습니다. 다시 시도해 주세요.");
     }
@@ -1438,6 +1461,12 @@ export default function App() {
       if (isFirebaseConfigured) {
         if (!auth?.currentUser) {
           throw new Error("로그인 상태를 확인할 수 없습니다.");
+        }
+
+        if (db) {
+          await leaveFamily(db, activeUserId).catch(() => {
+            // Ignore: if there was no membership doc, there's nothing to clean up.
+          });
         }
 
         await deleteUser(auth.currentUser);
@@ -1576,8 +1605,6 @@ export default function App() {
         deleteSchedule(deleteTargetId);
       } else if (deleteTargetType === "vote") {
         deleteVote(deleteTargetId);
-      } else if (deleteTargetType === "member") {
-        deleteMember(deleteTargetId);
       } else if (deleteTargetType === "meal") {
         deleteMeal();
       } else if (deleteTargetType === "wishedMenu") {
@@ -1701,7 +1728,7 @@ export default function App() {
                 <Text style={styles.passwordToggleText}>{showPassword ? "숨김" : "표시"}</Text>
               </Pressable>
             </View>
-            <Text style={styles.muted}>보안을 위해 비밀번호는 최소 4자 이상이어야 합니다.</Text>
+            <Text style={styles.muted}>보안을 위해 비밀번호는 최소 6자 이상이어야 합니다.</Text>
 
             {authError ? <Text style={styles.authErrorText}>{authError}</Text> : null}
 
@@ -1936,13 +1963,7 @@ export default function App() {
           />
         ) : null}
         {tab === "family" ? (
-          <FamilyScreen
-            members={members}
-            onMood={setMemberMood}
-            onAddMember={addMember}
-            onRequestDeleteMember={(memberId) => openDeleteModal(memberId, "member")}
-            themeColors={themeColors}
-          />
+          <FamilyScreen members={members} myUid={activeUserId} onMood={setMyMood} themeColors={themeColors} />
         ) : null}
         {tab === "settings" ? (
           <SettingsScreen
@@ -1987,13 +2008,11 @@ export default function App() {
               ]}
             >
               <Text style={styles.deleteSheetTitle}>
-                {deleteTargetType === "member"
-                  ? "가족 구성원을 삭제하시겠습니까?"
-                  : deleteTargetType === "vote"
-                    ? "투표를 삭제하시겠습니까?"
-                    : deleteTargetType === "wishedMenu"
-                      ? "희망 메뉴를 삭제하시겠습니까?"
-                      : "정말로 삭제하시겠습니까?"}
+                {deleteTargetType === "vote"
+                  ? "투표를 삭제하시겠습니까?"
+                  : deleteTargetType === "wishedMenu"
+                    ? "희망 메뉴를 삭제하시겠습니까?"
+                    : "정말로 삭제하시겠습니까?"}
               </Text>
               <View style={styles.deleteSheetButtons}>
                 <Pressable style={styles.deleteSheetCancelButton} onPress={closeDeleteModal}>
@@ -2495,6 +2514,9 @@ function createStyles(themeColors: ThemeColors) {
   chipSelected: {
     borderColor: themeColors.accent,
     backgroundColor: themeColors.accentSoft
+  },
+  chipDisabled: {
+    opacity: 0.5
   },
   chipLabel: {
     color: themeColors.textPrimary,

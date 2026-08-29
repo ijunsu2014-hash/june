@@ -3,8 +3,8 @@ export type MealStatus = "home" | "eat_out";
 
 export interface FamilyMember {
   id: string;
+  uid: string;
   name: string;
-  role: string;
   isOnline: boolean;
   mood: MoodType;
 }

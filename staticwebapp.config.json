@@ -1,13 +1,7 @@
 {
-  "routes": [
-    {
-      "route": "/*",
-      "rewrite": "/index.html"
-    }
-  ],
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/images/*", "/*.json", "/*.txt", "/*.ico"]
+    "exclude": ["/_expo/*", "/images/*", "/*.json", "/*.txt", "/*.ico", "/*.css", "/*.js"]
   },
   "mimeTypes": {
     ".webmanifest": "application/manifest+json"
