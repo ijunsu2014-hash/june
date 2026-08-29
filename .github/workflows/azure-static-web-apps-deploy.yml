@@ -23,7 +23,6 @@ jobs:
         run: |
           npm install
           npm run build
-        working-directory: ./familytalk-app
         env:
           EXPO_PUBLIC_FIREBASE_API_KEY: ${{ secrets.EXPO_PUBLIC_FIREBASE_API_KEY }}
           EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN }}
@@ -39,7 +38,7 @@ jobs:
           azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN_GREEN_RIVER_0BA37000F }}
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           action: "upload"
-          app_location: "./familytalk-app"
+          app_location: "/"
           output_location: "dist"
           skip_app_build: true
 
